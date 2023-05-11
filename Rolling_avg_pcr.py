@@ -20,6 +20,8 @@ def calculate_pcr(df: pd.DataFrame) -> float:
 def analyze(file, short_avg_period, long_avg_period, short_weight, long_weight):
     # Load the CSV file
     df = pd.read_csv(file)
+
+    # Determine which type of data, OptionOmega or BYOB
     if df.columns[0] == "Date Opened":  # OO BT data
         # Convert 'Date Opened' to datetime format
         df["Date Opened"] = pd.to_datetime(df["Date Opened"])
