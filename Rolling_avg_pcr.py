@@ -5,6 +5,7 @@ import PySimpleGUI as sg
 import os
 import subprocess
 import math
+import platform
 
 
 def calculate_pcr(df: pd.DataFrame) -> float:
@@ -149,7 +150,13 @@ def analyze(file, short_avg_period, long_avg_period, short_weight, long_weight):
             worksheet.set_column(col_idx, col_idx, column_length)
 
     # open file in excel
-    subprocess.Popen(["open", filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # subprocess.Popen(["open", filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if platform.system() == "Windows":
+        subprocess.Popen(["cmd", "/c", "start", filename], shell=True)
+    elif platform.system() == "Darwin":  # This is the value returned for macOS
+        subprocess.Popen(["open", filename])
+    else:
+        print("Unsupported platform: ", platform.system())
 
 
 def main():
