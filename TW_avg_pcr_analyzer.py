@@ -8,6 +8,7 @@ import math
 import platform
 
 icon = b"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"
+version = "v.1.0.2"
 
 
 def calculate_pcr(df: pd.DataFrame) -> float:
@@ -142,8 +143,7 @@ def analyze(file, short_avg_period, long_avg_period, short_weight, long_weight, 
 
         # Get the xlsxwriter workbook and worksheet objects
         workbook = writer.book
-        worksheet = writer.sheets["TW_PCR"]
-        worksheet_1mo = writer.sheets["1mo Avg PCR"]
+        worksheets = [writer.sheets["TW_PCR"], writer.sheets["1mo Avg PCR"]]
 
         # Set the PCR columns to percentage format
         percent_format = workbook.add_format({"num_format": "0.0%"})
@@ -151,78 +151,42 @@ def analyze(file, short_avg_period, long_avg_period, short_weight, long_weight, 
         for row in range(
             2, len(df_output) + 2
         ):  # +2 because Excel's index starts from 1 and there is a header row
-            # Apply a conditional format to the PCR cells in the current row
-            worksheet.conditional_format(
-                f"B{row}:{get_column_letter(len(df_output.columns))}{row}",
-                {
-                    "type": "3_color_scale",
-                    "min_color": "red",
-                    "mid_color": "yellow",
-                    "max_color": "green",
-                },
-            )
-            # Format top x values in bold white text
-            if top_x > 0:
+            for worksheet in worksheets:
+                # Apply a conditional format to the PCR cells in the current row
                 worksheet.conditional_format(
                     f"B{row}:{get_column_letter(len(df_output.columns))}{row}",
                     {
-                        "type": "top",
-                        "value": top_x,
-                        "format": top_x_format,
+                        "type": "3_color_scale",
+                        "min_color": "red",
+                        "mid_color": "yellow",
+                        "max_color": "green",
                     },
                 )
-
-            # Set the number format of the PCR cells in the current row to percentage
-            for col in range(
-                2, len(df_output.columns) + 2
-            ):  # +2 because Excel's index starts from 1
-                cell_value = df_output.iloc[row - 2, col - 2]
-
-                if (
-                    isinstance(cell_value, (int, float))
-                    and not math.isnan(cell_value)
-                    and not math.isinf(cell_value)
-                ):
-                    worksheet.write(row - 1, col - 2, cell_value / 100, percent_format)
-
-        for row in range(
-            2, len(df_pcr_1mo_avg) + 2
-        ):  # +2 because Excel's index starts from 1 and there is a header row
-            # Apply a conditional format to the PCR cells in the current row
-            worksheet_1mo.conditional_format(
-                f"B{row}:{get_column_letter(len(df_output_1mo_avg.columns))}{row}",
-                {
-                    "type": "3_color_scale",
-                    "min_color": "red",
-                    "mid_color": "yellow",
-                    "max_color": "green",
-                },
-            )
-            # Format top x values in bold white text
-            if top_x > 0:
-                worksheet_1mo.conditional_format(
-                    f"B{row}:{get_column_letter(len(df_output_1mo_avg.columns))}{row}",
-                    {
-                        "type": "top",
-                        "value": top_x,
-                        "format": top_x_format,
-                    },
-                )
-
-            # Set the number format of the PCR cells in the current row to percentage
-            for col in range(
-                2, len(df_output_1mo_avg.columns) + 2
-            ):  # +2 because Excel's index starts from 1
-                cell_value = df_output_1mo_avg.iloc[row - 2, col - 2]
-
-                if (
-                    isinstance(cell_value, (int, float))
-                    and not math.isnan(cell_value)
-                    and not math.isinf(cell_value)
-                ):
-                    worksheet_1mo.write(
-                        row - 1, col - 2, cell_value / 100, percent_format
+                # Format top x values in bold white text
+                if top_x > 0:
+                    worksheet.conditional_format(
+                        f"B{row}:{get_column_letter(len(df_output.columns))}{row}",
+                        {
+                            "type": "top",
+                            "value": top_x,
+                            "format": top_x_format,
+                        },
                     )
+
+                # Set the number format of the PCR cells in the current row to percentage
+                for col in range(
+                    2, len(df_output.columns) + 2
+                ):  # +2 because Excel's index starts from 1
+                    cell_value = df_output.iloc[row - 2, col - 2]
+
+                    if (
+                        isinstance(cell_value, (int, float))
+                        and not math.isnan(cell_value)
+                        and not math.isinf(cell_value)
+                    ):
+                        worksheet.write(
+                            row - 1, col - 2, cell_value / 100, percent_format
+                        )
 
         # Adjust the column widths
         for column in df_output:
@@ -230,15 +194,8 @@ def analyze(file, short_avg_period, long_avg_period, short_weight, long_weight, 
                 df_output[column].astype(str).map(len).max() + 1, len(column) + 1
             )
             col_idx = df_output.columns.get_loc(column)
-            worksheet.set_column(col_idx, col_idx, column_length)
-
-        # Adjust the column widths
-        for column in df_output_1mo_avg:
-            column_length = max(
-                df_output_1mo_avg[column].astype(str).map(len).max() + 1, len(column) + 1
-            )
-            col_idx = df_output_1mo_avg.columns.get_loc(column)
-            worksheet_1mo.set_column(col_idx, col_idx, column_length)
+            for worksheet in worksheets:
+                worksheet.set_column(col_idx, col_idx, column_length)
 
     # open file in excel
     if platform.system() == "Windows":
@@ -295,7 +252,7 @@ def main():
             sg.Button("Analyze", pad=(5, 10)),
             sg.Button("Cancel"),
             sg.Text("", size=(30, 1)),
-            sg.Text("v1.0.1"),
+            sg.Text(version),
         ],
     ]
 
