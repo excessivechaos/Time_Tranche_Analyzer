@@ -1,0 +1,11 @@
+analysis_max_daily_loss copy.py
+analysis_max_daily_loss.py
+.DS_Store
+Walkforward Test*
+news_dates.py
+r1 ananlysis.ipynb
+test.ipynb
+tradelog analysis.py
+.vscode/settings.json
+__pycache__
+Problem CSVs

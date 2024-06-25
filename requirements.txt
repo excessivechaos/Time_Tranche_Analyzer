@@ -1,4 +1,7 @@
 openpyxl
 pandas
-PySimpleGUI
+PySimpleGUI==4.60.5
 xlsxwriter
+matplotlib
+numpy
+python-dateutil
