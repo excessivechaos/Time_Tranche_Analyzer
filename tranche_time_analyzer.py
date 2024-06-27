@@ -516,8 +516,22 @@ def get_pnl_plot(results, filename):
             mar = cagr / max_dd
         else:
             mar = float("inf")
+        
+        # Group PnL by month
+        df['YearMonth'] = df['Date'].dt.to_period('M')
+        monthly_pnl = df.groupby('YearMonth')['Day PnL'].sum()
+        
+        # Calculate largest and lowest monthly PnL with their corresponding dates
+        largest_monthly_pnl = monthly_pnl.max()
+        largest_monthly_pnl_date = monthly_pnl.idxmax().to_timestamp()
+        lowest_monthly_pnl = monthly_pnl.min()
+        lowest_monthly_pnl_date = monthly_pnl.idxmin().to_timestamp()
 
-        # create row for Table
+        # Format the date strings
+        largest_monthly_pnl_str = f"{largest_monthly_pnl:,.2f} {largest_monthly_pnl_date.strftime('%b%y')}"
+        lowest_monthly_pnl_str = f"{lowest_monthly_pnl:,.2f} {lowest_monthly_pnl_date.strftime('%b%y')}"
+
+        # Create row for Table
         row_data = [
             f"{strategy}",
             f"{final_value:,.2f}",
@@ -527,6 +541,8 @@ def get_pnl_plot(results, filename):
             f"{max_dd:.2%}",
             f"{dd_days}",
             f"{mar:.2f}",
+            largest_monthly_pnl_str,
+            lowest_monthly_pnl_str,
         ]
 
         table_data.append(row_data)
@@ -1358,6 +1374,10 @@ def main():
                             key=f"-TABLE_{day}_{tg}-",
                             expand_x=True,
                             auto_size_columns=True,
+                            background_color='white',
+                            alternating_row_color='lightgrey',
+                            header_text_color='black',
+                            header_background_color='lightblue',
                         )
                     ]
                 ],
@@ -1391,13 +1411,19 @@ def main():
                                                 "Total Return",
                                                 "CAGR",
                                                 "Max DD",
-                                                "Max Days in DD",
+                                                "Max DD Days",
                                                 "MAR",
+                                                "Biggest Month",
+                                                "Lowest Month"
                                             ],
                                             key="-PNL_TABLE_CHART-",
                                             expand_x=True,
                                             num_rows=4,
                                             auto_size_columns=True,
+                                            background_color='lightgrey',
+                                            alternating_row_color='white',
+                                            header_text_color='black',
+                                            header_background_color='lightblue',
                                         )
                                     ],
                                     [
@@ -1473,7 +1499,7 @@ def main():
 
     layout = [
         [
-            sg.Button("Analyze", pad=(5, 10)),
+            sg.Button("Analyze", pad=(5, 10), bind_return_key=True),
             sg.Text("  "),
             sg.pin(
                 sg.ProgressBar(
@@ -1855,8 +1881,9 @@ def main():
                             top_times_df["Values"] = top_times_df["Values"].apply(
                                 lambda x: f"{x * 100:.2f}%"
                             )
+                        table_data = top_times_df.values.tolist()
                         window[f"-TABLE_{day}_{right_type}-"].update(
-                            values=top_times_df.values.tolist()
+                            values=table_data, num_rows=len(table_data)
                         )
 
                 if values["-BACKTEST-"]:
@@ -1908,7 +1935,7 @@ def main():
                     chart_filenames[chart] = get_next_filename(path, base_filename, ext)
 
                 table_data = get_pnl_plot(results, chart_filenames["-PNL_CHART-"])
-                window["-PNL_TABLE_CHART-"].update(values=table_data)
+                window["-PNL_TABLE_CHART-"].update(values=table_data, num_rows=len(table_data))
 
                 get_weekday_pnl_chart(results, chart_filenames["-WEEKDAY_PNL_CHART-"])
                 get_news_event_pnl_chart(results, chart_filenames["-NEWS_PNL_CHART-"])
