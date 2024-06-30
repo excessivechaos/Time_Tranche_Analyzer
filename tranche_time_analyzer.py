@@ -14,7 +14,6 @@ from dateutil import parser
 from dateutil.relativedelta import relativedelta
 import matplotlib
 import uuid
-import csv
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
