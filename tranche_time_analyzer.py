@@ -14,6 +14,7 @@ from dateutil import parser
 from dateutil.relativedelta import relativedelta
 import matplotlib
 import uuid
+import csv
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -26,7 +27,7 @@ except Exception:
     pass
 
 icon = b"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"
-__version__ = "v.1.7.2"
+__version__ = "v.1.8.0"
 __program_name__ = "Tranche Time Analyzer"
 sg.theme("Reddit")
 if sg.running_windows():
@@ -142,15 +143,16 @@ def with_gc(func):
 
 def analyze(
     df: pd.DataFrame,
-    short_avg_period: int,
-    long_avg_period: int,
-    short_weight: float,
-    long_weight: float,
-    calc_type: str,
-    agg_type: str = "M",
+    settings: dict,
 ) -> Tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame
 ]:
+    short_avg_period = settings["-AVG_PERIOD_1-"]
+    long_avg_period = settings["-AVG_PERIOD_2-"]
+    short_weight = settings["-PERIOD_1_WEIGHT-"] / 100
+    long_weight = settings["-PERIOD_2_WEIGHT-"] / 100
+    calc_type = settings["-CALC_TYPE-"]
+    agg_type = "M" if settings["-AGG_TYPE-"] == "Monthly" else "W"
 
     def calculate_avg_pnl(df: pd.DataFrame) -> float:
         if df.columns[0] == "Date Opened":  # OO BT data
@@ -256,14 +258,14 @@ def analyze(
     # get list of news event dates to skip.
     news_date_exclusions = []
     for release, date_list in news_events.items():
-        if release in analysis_options["news_exclusions"]:
+        if release in settings["-NEWS_EXCLUSIONS-"]:
             news_date_exclusions += date_list
 
     # filter df for news exclusions
     df = df[~df["EntryTime"].dt.date.isin(news_date_exclusions)]
 
     # filter for weekday exlusions
-    df = df[~df["Day of Week"].isin(analysis_options["weekday_exclusions"])]
+    df = df[~df["Day of Week"].isin(settings["-WEEKDAY_EXCLUSIONS-"])]
 
     if is_BYOB_data(df):
         df_grouped_combined = df.groupby(
@@ -293,13 +295,13 @@ def analyze(
     df_output_combined, df_output_1mo_avg_combined = perform_analysis(
         df_grouped_combined
     )
-    if df[df["OptionType"] == "P"].empty or not analysis_options["put_or_call"]:
+    if df[df["OptionType"] == "P"].empty or not settings["-PUT_OR_CALL-"]:
         df_output_puts, df_output_1mo_avg_puts = pd.DataFrame(
             columns=["Date Range"]
         ), pd.DataFrame(columns=["Date Range"])
     else:
         df_output_puts, df_output_1mo_avg_puts = perform_analysis(df_grouped_puts)
-    if df[df["OptionType"] == "C"].empty or not analysis_options["put_or_call"]:
+    if df[df["OptionType"] == "C"].empty or not settings["-PUT_OR_CALL-"]:
         df_output_calls, df_output_1mo_avg_calls = pd.DataFrame(
             columns=["Date Range"]
         ), pd.DataFrame(columns=["Date Range"])
@@ -318,16 +320,17 @@ def analyze(
 
 def create_excel_file(
     file,
-    calc_type,
-    short_avg_period,
-    short_weight,
-    long_avg_period,
-    long_weight,
-    top_x,
+    settings,
     open_files,
-    agg_type,
 ) -> dict:
-    result = load_data(file)
+    calc_type = settings["-CALC_TYPE-"]
+    short_avg_period = settings["-AVG_PERIOD_1-"]
+    short_weight = settings["-PERIOD_1_WEIGHT-"] / 100
+    long_avg_period = settings["-AVG_PERIOD_2-"]
+    long_weight = settings["-PERIOD_2_WEIGHT-"] / 100
+    top_x = settings["-TOP_X-"]
+    weekday_exclusions = settings["-WEEKDAY_EXCLUSIONS-"]
+    result = load_data(file, weekday_exclusions)
     if result:
         df, start_date, end_date = result
     else:
@@ -365,13 +368,13 @@ def create_excel_file(
         }
 
         days_sorted = ["All"]
-        if analysis_options["idv_weekday"]:
+        if settings["-IDV_WEEKDAY-"]:
             # This gets the unique days of the week from the DataFrame, then sorts them based on the numerical value
             days_sorted = days_sorted + sorted(
                 [
                     d
                     for d in df["Day of Week"].unique()
-                    if d not in analysis_options["weekday_exclusions"]
+                    if d not in settings["-WEEKDAY_EXCLUSIONS-"]
                 ],
                 key=lambda day: day_to_num[day],
             )
@@ -391,15 +394,7 @@ def create_excel_file(
                 df_output_1mo_avg_puts,
                 df_output_calls,
                 df_output_1mo_avg_calls,
-            ) = analyze(
-                _df,
-                short_avg_period,
-                long_avg_period,
-                short_weight,
-                long_weight,
-                calc_type,
-                agg_type,
-            )
+            ) = analyze(_df, settings)
             # store the results and the original df in case we need it later
             df_dicts["Put/Call Comb"][day[:3]] = {"org_df": _df, "result_df": df_output}
             df_dicts["Puts"][day[:3]] = {
@@ -416,7 +411,7 @@ def create_excel_file(
             df_output_1mo_avg.to_excel(
                 writer, sheet_name=f"P-C_Comb_1mo-{day[:3]}", index=False
             )
-            if analysis_options["put_or_call"]:
+            if settings["-PUT_OR_CALL-"]:
                 df_output_puts.to_excel(
                     writer, sheet_name=f"Puts_{day[:3]}", index=False
                 )
@@ -494,6 +489,14 @@ def chunk_list(input_list, chunk_size=4):
     ]
 
 
+def format_float(value):
+    """This will remove decmal from float for GUI
+    display purposes, but only when decimal is .0"""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
 @with_gc
 def get_pnl_plot(results, filename):
     table_data = []
@@ -506,6 +509,8 @@ def get_pnl_plot(results, filename):
         dd_days = df["DD Days"].max()
         initial_value = df["Initial Value"].min()
         total_return = (final_value - initial_value) / initial_value
+        win_streak = df["Win Streak"].max()
+        loss_streak = df["Loss Streak"].max()
         # CAGR
         start_dt = df["Date"].iloc[0]
         end_dt = df["Date"].iloc[-1]
@@ -545,6 +550,8 @@ def get_pnl_plot(results, filename):
             f"{max_dd:.2%}",
             f"{dd_days}",
             f"{mar:.2f}",
+            f"{win_streak}",
+            f"{loss_streak}",
             largest_monthly_pnl_str,
             lowest_monthly_pnl_str,
         ]
@@ -618,11 +625,7 @@ def get_news_event_pnl_chart(results, filename, sum=True):
 @with_gc
 def get_weekday_pnl_chart(results, filename):
     # Filter weekdays based on exclusions
-    weekdays = [
-        day[:3]
-        for day in weekday_list
-        if day not in analysis_options.get("weekday_exclusions", [])
-    ]
+    weekdays = [day[:3] for day in weekday_list]
 
     # Initialize a dictionary to hold summed PnL for each strategy and weekday
     summed_pnls = {
@@ -660,19 +663,34 @@ def get_weekday_pnl_chart(results, filename):
 
 
 def get_top_times(
-    df_dict, top_n, date: dt.datetime.date = None, agg_type="M"
+    df_dict, strategy_settings, date: dt.datetime.date = None, top_n_override=0
 ) -> pd.DataFrame:
-    combined_top_values = pd.DataFrame()
-
+    portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
+    all_top_values = []
+    top_n = 0
     # Iterate over each DataFrame in the dictionary
-    for df_name, _df_dict in df_dict.items():
+    for source, _df_dict in df_dict.items():
+        strategy = "-SINGLE_MODE-" if not portfolio_mode else f"{source}.csv"
+        try:
+            settings = strategy_settings[strategy]
+        except KeyError:
+            # this is probably the separate put/call analysis we need to parse the source file
+            strategy = f"{source.split('||')[1]}.csv"
+            settings = strategy_settings[strategy]
+
+        agg_type = "M" if settings["-AGG_TYPE-"] == "Monthly" else "W"
+        top_n = top_n_override if top_n_override else int(settings["-TOP_X-"])
+        calc_type = settings["-CALC_TYPE-"]
         df_orig = _df_dict["result_df"]
+
         if not date:
             df = df_orig.copy()
         else:
             df = df_orig.loc[df_orig.index == pd.Period(date, freq=agg_type), :]
+
         if df.index.name != "Date Range":
             df.set_index("Date Range", inplace=True)
+
         # Extract the first row of values
         try:
             if df.empty:
@@ -685,29 +703,33 @@ def get_top_times(
         # Sort the values in descending order and select the top n
         top_values = first_row_values.sort_values(ascending=False).head(top_n)
 
-        # Add the source DataFrame name to the series
-        top_values = top_values.rename(df_name)
+        # Format values based on calc_type and add to the list of all top values
+        for time, value in top_values.items():
+            formatted_value = (
+                f"{value:.2f}" if calc_type == "PnL" else f"{value * 100:.2f}%"
+            )
+            all_top_values.append(
+                {
+                    "Top Times": time,
+                    "Values": formatted_value,
+                    "Source": source,
+                    "RawValue": value,  # Keep raw value for sorting
+                }
+            )
 
-        # Combine the top values and their sources into a single DataFrame
-        combined_top_values = pd.concat([combined_top_values, top_values], axis=1)
+    # Convert the list to a DataFrame
+    if all_top_values:
+        result_df = pd.DataFrame(all_top_values)
+    else:
+        # empty
+        result_df = pd.DataFrame(columns=["Top Times", "Values", "Source", "RawValue"])
 
-    # Keep only the highest value for each time slot
-    combined_top_values["Max Value"] = combined_top_values.max(axis=1)
-    combined_top_values["Source"] = combined_top_values.idxmax(axis=1)
+    if not portfolio_mode:
+        # Sort all values based on RawValue and select the overall top n
+        result_df = result_df.sort_values("RawValue", ascending=False).head(top_n)
 
-    # Sort the combined values to get the overall top 5
-    top_combined = combined_top_values.sort_values(
-        by="Max Value", ascending=False
-    ).head(top_n)
-
-    # Create a DataFrame for the result
-    result_df = pd.DataFrame(
-        {
-            "Top Times": top_combined.index,
-            "Values": top_combined["Max Value"],
-            "Source": top_combined["Source"],
-        }
-    ).dropna()
+    # Drop the RawValue column as it's no longer needed
+    result_df = result_df.drop(columns=["RawValue"])
 
     return result_df
 
@@ -825,6 +847,7 @@ def is_BYOB_data(df: pd.DataFrame) -> bool:
 
 def load_data(
     file: str,
+    weekday_exclusions: list = [],
 ) -> Tuple[pd.DataFrame, dt.datetime.date, dt.datetime.date]:
     """
     Takes a Trade Log CSV from either Option Omega or BYOB
@@ -833,7 +856,14 @@ def load_data(
     """
     # Load the CSV file
     try:
-        df = pd.read_csv(file)
+        delims = [",", ";", "\t", "|"]
+        for delim in delims:
+            df = pd.read_csv(file, delimiter=delim)
+            if len(df.columns) > 1:
+                break
+        if len(df.columns) <= 1:
+            # none of the delims worked
+            raise UnicodeDecodeError
     except UnicodeDecodeError:
         sg.popup_no_border(
             "This does not appear to be a backtest results\nCSV from either OptionOmega"
@@ -894,7 +924,7 @@ def load_data(
         end_date = df["EntryTime"].max().date()
 
     return (
-        df[~df["Day of Week"].isin(analysis_options["weekday_exclusions"])],
+        df[~df["Day of Week"].isin(weekday_exclusions)],
         start_date,
         end_date,
     )
@@ -912,14 +942,8 @@ def resize_image(image_path, size):
 @with_gc
 def run_analysis_threaded(
     files_list,
-    calc_type,
-    short_period,
-    short_weight,
-    long_period,
-    long_weight,
-    top_n,
+    strategy_settings,
     open_files,
-    agg_type,
 ):
     # initialize df_dicts
     df_dicts = {"Put/Call Comb": {}, "Puts": {}, "Calls": {}}
@@ -934,22 +958,19 @@ def run_analysis_threaded(
         }
 
     for file in files_list:
-        result_dicts = create_excel_file(
-            file,
-            calc_type,
-            short_period,
-            short_weight,
-            long_period,
-            long_weight,
-            top_n,
-            open_files,
-            agg_type=agg_type,
-        )
         # check for cancel flag to stop thread
         if cancel_flag.is_set():
             cancel_flag.clear()
             results_queue.put(("-BACKTEST_CANCELED-", ""))
             return
+
+        strategy = (
+            "-SINGLE_MODE-"
+            if "-SINGLE_MODE-" in strategy_settings
+            else os.path.basename(file)
+        )
+        settings = strategy_settings[strategy]
+        result_dicts = create_excel_file(file, settings, open_files)
 
         source = os.path.splitext(os.path.basename(file))[0]
         for right_type, day_dict in result_dicts.items():
@@ -969,33 +990,91 @@ def run_analysis_threaded(
     # from among both individual datasets
     for _day, _day_dict in df_dicts["Puts"].items():
         for _source, _df_dict in _day_dict.items():
-            df_dicts["Best P/C"][_day][f"Put-{_source}"] = _df_dict
+            df_dicts["Best P/C"][_day][f"Put||{_source}"] = _df_dict
 
     for _day, _day_dict in df_dicts["Calls"].items():
         for _source, _df_dict in _day_dict.items():
-            df_dicts["Best P/C"][_day][f"Call-{_source}"] = _df_dict
+            df_dicts["Best P/C"][_day][f"Call||{_source}"] = _df_dict
 
     results_queue.put(("-RUN_ANALYSIS_END-", df_dicts))
     return df_dicts
+
+
+def update_strategy_settings(values, settings):
+    settings.update(
+        {
+            "-AVG_PERIOD_1-": values["-AVG_PERIOD_1-"],
+            "-PERIOD_1_WEIGHT-": values["-PERIOD_1_WEIGHT-"],
+            "-AVG_PERIOD_2-": values["-AVG_PERIOD_2-"],
+            "-PERIOD_2_WEIGHT-": values["-PERIOD_2_WEIGHT-"],
+            "-TOP_X-": values["-TOP_X-"],
+            "-CALC_TYPE-": values["-CALC_TYPE-"],
+            "-AGG_TYPE-": values["-AGG_TYPE-"],
+            "-MIN_TRANCHES-": values["-MIN_TRANCHES-"],
+            "-MAX_TRANCHES-": values["-MAX_TRANCHES-"],
+            "-BP_PER-": values["-BP_PER-"],
+        }
+    )
+
+    # Initialize option settings if they don't exist
+    for option in [
+        "-WEEKDAY_EXCLUSIONS-",
+        "-NEWS_EXCLUSIONS-",
+        "-PUT_OR_CALL-",
+        "-IDV_WEEKDAY-",
+    ]:
+        if option not in settings:
+            settings[option] = [] if option.endswith("EXCLUSIONS-") else False
+
+
+def validate_strategy_settings(strategy_settings):
+    for strategy in strategy_settings:
+        try:
+            period1 = int(strategy_settings[strategy]["-AVG_PERIOD_1-"])
+            period2 = int(strategy_settings[strategy]["-AVG_PERIOD_2-"])
+            weight1 = float(strategy_settings[strategy]["-PERIOD_1_WEIGHT-"])
+            weight2 = float(strategy_settings[strategy]["-PERIOD_2_WEIGHT-"])
+            strategy_settings[strategy]["-AVG_PERIOD_1-"] = period1
+            strategy_settings[strategy]["-AVG_PERIOD_2-"] = period2
+            strategy_settings[strategy]["-PERIOD_1_WEIGHT-"] = weight1
+            strategy_settings[strategy]["-PERIOD_2_WEIGHT-"] = weight2
+
+            strategy_settings[strategy]["-TOP_X-"] = int(
+                strategy_settings[strategy]["-TOP_X-"]
+            )
+            strategy_settings[strategy]["-MIN_TRANCHES-"] = int(
+                strategy_settings[strategy]["-MIN_TRANCHES-"]
+            )
+            strategy_settings[strategy]["-MAX_TRANCHES-"] = int(
+                strategy_settings[strategy]["-MAX_TRANCHES-"]
+            )
+            strategy_settings[strategy]["-BP_PER-"] = float(
+                strategy_settings[strategy]["-BP_PER-"]
+            )
+        except ValueError:
+            return (
+                "Problem with values entered.\nPlease enter only positive whole numbers"
+            )
+        if period1 < 1 or period2 < 1 or period1 > period2:
+            return "Please make sure both averaging periods are > 0\nand that Trailing Avg 2 is >= to Trailing Avg 1"
+        if weight1 + weight2 != 100:
+            return "Trailing Avg Weights should add up to 100"
+
+    return True
 
 
 @with_gc
 def walk_forward_test(
     df_dicts: dict,
     path: str,
-    short_avg_period: int,
-    long_avg_period: int,
-    top_n: int,
+    strategy_settings: dict,
     start: dt.datetime.date = None,
     end: dt.datetime.date = None,
     initial_value: float = 100_000,
     use_scaling=False,
-    min_tranches=4,
-    max_tranches=9,
-    bp_per_contract=6000,
-    agg_type="M",
     export_trades=False,
 ):
+    portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
     start_date = dt.date.min
     end_date = dt.date.max
     # loop through all the source dfs
@@ -1011,24 +1090,32 @@ def walk_forward_test(
 
     if not start:
         # find the first date the data is fully warmed up
-        date_adv = start_date + relativedelta(
-            months=max(long_avg_period, short_avg_period)
+        max_long_avg_period = max(
+            [
+                max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"])
+                for settings in strategy_settings.values()
+            ]
         )
+        date_adv = start_date + relativedelta(months=max_long_avg_period)
         start = dt.date(date_adv.year, date_adv.month, 1)
     else:
         # use either the user input date or the first date in the dateset
         # whichever is later.  The data may not be warmed up, but the user
         # has overriden this.
         start = max(start_date, start)
-
     end = end_date if end is None else end
-    strats = ["All-P_C_Comb"]
-    if analysis_options["put_or_call"] and analysis_options["idv_weekday"]:
-        strats += ["Weekday-P_C_Comb", "All-Best_P_or_C", "Weekday-Best_P_or_C"]
-    elif analysis_options["idv_weekday"]:
-        strats.append("Weekday-P_C_Comb")
-    elif analysis_options["put_or_call"]:
-        strats.append("All-Best_P_or_C")
+
+    if not portfolio_mode:
+        settings = strategy_settings["-SINGLE_MODE-"]
+        strats = ["All-P_C_Comb"]
+        if settings["-PUT_OR_CALL-"] and settings["-IDV_WEEKDAY-"]:
+            strats += ["Weekday-P_C_Comb", "All-Best_P_or_C", "Weekday-Best_P_or_C"]
+        elif settings["-IDV_WEEKDAY-"]:
+            strats.append("Weekday-P_C_Comb")
+        elif settings["-PUT_OR_CALL-"]:
+            strats.append("All-Best_P_or_C")
+    else:
+        strats = ["Portfolio"] + list(strategy_settings.keys())
 
     portfolio_metrics = {}
     for _strat in strats:
@@ -1038,23 +1125,28 @@ def walk_forward_test(
             "Max DD": 0.0,
             "Current DD": 0.0,
             "DD Days": 0,
-            "Tranche Qtys": [1 for _ in range(top_n)],
-            "Num Tranches": top_n,
+            "Tranche Qtys": [],
+            "Port Tranche Qtys": [],
+            "Num Tranches": 1,
+            "Port Num Tranches": 1,
             "trade log": pd.DataFrame(),
+            "Win Streak": 0,
+            "Loss Streak": 0,
         }
+
+    if portfolio_mode:
+        port_dict = portfolio_metrics["Portfolio"]
+
+    # init results
     results = {}
+    for strategy in portfolio_metrics:
+        results[strategy] = pd.DataFrame()
 
     # convert weekdays from full day name to short name. i.e. Monday to Mon
-    day_exlusions = [_day[:3] for _day in analysis_options["weekday_exclusions"]]
     day_list = [_day[:3] for _day in weekday_list]
 
-    # get list of news event dates to skip.
-    news_date_exclusions = []
-    for release, date_list in news_events.items():
-        if release in analysis_options["news_exclusions"]:
-            news_date_exclusions += date_list
-
     current_date = start
+    skip_day = False
     while current_date <= end:
         # check for cancel flag to stop thread
         if cancel_flag.is_set():
@@ -1062,91 +1154,153 @@ def walk_forward_test(
             results_queue.put(("-BACKTEST_CANCELED-", ""))
             return
 
+        if portfolio_mode:
+            # reset daily pnl for portfolio
+            port_dict["Current Day PnL"] = 0
+
         current_weekday = current_date.strftime("%a")
-        if current_weekday in day_exlusions or current_weekday not in day_list:
-            current_date += dt.timedelta(1)
-            continue
-
-        if current_date in news_date_exclusions:
-            current_date += dt.timedelta(1)
-            continue
-
-        if use_scaling:
-            # determine the number of contracts and tranches to trade
-            for strat_dict in portfolio_metrics.values():
-                num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
-                tranches = max_tranches
-                while True:
-                    if num_contracts > tranches:
-                        max_tranche_qty = int(num_contracts / tranches)
-                        remain_qty = num_contracts - (tranches * max_tranche_qty)
-                        if remain_qty >= min_tranches or remain_qty == 0:
-                            # we're done we can stay at this number of tranches with
-                            # the remainder filling up another set of at least min tranches
-                            strat_dict["Num Tranches"] = tranches
-                            break
-                        else:
-                            # we need to take a tranche away so we can try to fill up at
-                            # least 1 full set at min amount
-                            if tranches - 1 < min_tranches:
-                                # we can't reduce any further, got with what we have
-                                # even if that means we will be adding contracts below the min
-                                strat_dict["Num Tranches"] = tranches
-                                break
-                            else:
-                                tranches -= 1
-                    else:
-                        strat_dict["Num Tranches"] = num_contracts
-                        break
-                # determine the qty of each tranche
-                tranche_qtys = []
-                tranches = strat_dict["Num Tranches"]
-                for x in range(tranches):
-                    if x < num_contracts % tranches:
-                        # this is where we add the remaining contracts after filling up all tranches
-                        tranche_qtys.append(int(num_contracts / tranches) + 1)
-                    else:
-                        tranche_qtys.append(int(num_contracts / tranches))
-                strat_dict["Tranche Qtys"] = tranche_qtys
-
-        if agg_type == "M":
-            # date for best times should be the month prior as we don't know the future yet
-            best_time_date = current_date - relativedelta(months=1)
-        else:
-            best_time_date = current_date - relativedelta(weeks=1)
-
         for strat, strat_dict in portfolio_metrics.items():
-            try:
-                num_tranches = strat_dict["Num Tranches"]
-                if strat == "All-P_C_Comb":
-                    df_dict = df_dicts["Put/Call Comb"]["All"]
-                elif strat == "Weekday-P_C_Comb":
-                    df_dict = df_dicts["Put/Call Comb"][current_weekday]
-                elif strat == "All-Best_P_or_C":
-                    df_dict = df_dicts["Best P/C"]["All"]
-                elif strat == "Weekday-Best_P_or_C":
-                    df_dict = df_dicts["Best P/C"][current_weekday]
+            if portfolio_mode and strat == "Portfolio":
+                # we don't trade the portfolio, it is just the combination of all individual strats
+                continue
+            elif portfolio_mode:
+                settings = strategy_settings[strat]
+            else:
+                settings = strategy_settings["-SINGLE_MODE-"]
 
-                best_times_df = get_top_times(
-                    df_dict,
-                    num_tranches,
-                    best_time_date,
-                    agg_type,
-                )
+            # reset daily pnl for individual strategy
+            strat_dict["Current Day PnL"] = 0
 
-                best_times = best_times_df["Top Times"].to_list()
-                tranche_qtys = strat_dict["Tranche Qtys"]
-                # reset daily pnl
-                strat_dict["Current Day PnL"] = 0
-                for time in best_times:
-                    try:
+            day_exlusions = [_day[:3] for _day in settings["-WEEKDAY_EXCLUSIONS-"]]
+            # get list of news event dates to skip.
+            news_date_exclusions = []
+            for release, date_list in news_events.items():
+                if release in settings["-NEWS_EXCLUSIONS-"]:
+                    news_date_exclusions += date_list
+
+            skip_day = False
+            if (
+                current_weekday in day_exlusions
+                or current_weekday not in day_list
+                or current_date in news_date_exclusions
+            ):
+                skip_day = True
+
+            if not skip_day:
+                if use_scaling:
+
+                    def determine_num_tranches(
+                        min_tranches, max_tranches, num_contracts
+                    ):
+                        tranches = max_tranches
+                        while True:
+                            if num_contracts > tranches:
+                                max_tranche_qty = int(num_contracts / tranches)
+                                remain_qty = num_contracts - (
+                                    tranches * max_tranche_qty
+                                )
+                                if remain_qty >= min_tranches or remain_qty == 0:
+                                    # we're done we can stay at this number of tranches with
+                                    # the remainder filling up another set of at least min tranches
+                                    return tranches
+                                else:
+                                    # we need to take a tranche away so we can try to fill up at
+                                    # least 1 full set at min amount
+                                    if tranches - 1 < min_tranches:
+                                        # we can't reduce any further, got with what we have
+                                        # even if that means we will be adding contracts below the min
+                                        return tranches
+                                    else:
+                                        tranches -= 1
+                            else:
+                                return num_contracts
+
+                    def determine_tranche_qtys(tranches):
+                        tranche_qtys = []
+                        for x in range(tranches):
+                            if x < num_contracts % tranches:
+                                # this is where we add the remaining contracts after filling up all tranches
+                                tranche_qtys.append(int(num_contracts / tranches) + 1)
+                            else:
+                                tranche_qtys.append(int(num_contracts / tranches))
+                        return tranche_qtys
+
+                    min_tranches = settings["-MIN_TRANCHES-"]
+                    max_tranches = settings["-MAX_TRANCHES-"]
+                    bp_per_contract = settings["-BP_PER-"]
+                    num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
+                    tranches = determine_num_tranches(
+                        min_tranches, max_tranches, num_contracts
+                    )
+                    strat_dict["Num Tranches"] = tranches
+                    strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
+                    if portfolio_mode:
+                        equal_value = port_dict["Current Value"] / (
+                            len(portfolio_metrics) - 1
+                        )
+                        num_contracts = int(equal_value / bp_per_contract)
+                        tranches = determine_num_tranches(
+                            min_tranches, max_tranches, num_contracts
+                        )
+                        strat_dict["Port Num Tranches"] = tranches
+                        strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(
+                            tranches
+                        )
+                else:
+                    # not scaling
+                    num_contracts = settings["-TOP_X-"]
+                    strat_dict["Num Tranches"] = num_contracts
+                    strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
+                    strat_dict["Port Num Tranches"] = num_contracts
+                    strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
+
+                if settings["-AGG_TYPE-"] == "Monthly":
+                    # date for best times should be the month prior as we don't know the future yet
+                    best_time_date = current_date - relativedelta(months=1)
+                else:
+                    # grab from last week
+                    best_time_date = current_date - relativedelta(weeks=1)
+
+                def log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys):
+                    if portfolio_mode:
+                        if settings["-PUT_OR_CALL-"] and settings["-IDV_WEEKDAY-"]:
+                            df_dict = df_dicts["Best P/C"][current_weekday]
+                        elif settings["-PUT_OR_CALL-"]:
+                            df_dict = df_dicts["Best P/C"]["All"]
+                        elif settings["-IDV_WEEKDAY-"]:
+                            df_dict = df_dicts["Put/Call Comb"][current_weekday]
+                        else:
+                            df_dict = df_dicts["Put/Call Comb"]["All"]
+                    else:
+                        if strat == "All-P_C_Comb":
+                            df_dict = df_dicts["Put/Call Comb"]["All"]
+                        elif strat == "Weekday-P_C_Comb":
+                            df_dict = df_dicts["Put/Call Comb"][current_weekday]
+                        elif strat == "All-Best_P_or_C":
+                            df_dict = df_dicts["Best P/C"]["All"]
+                        elif strat == "Weekday-Best_P_or_C":
+                            df_dict = df_dicts["Best P/C"][current_weekday]
+
+                    best_times_df = get_top_times(
+                        df_dict, strategy_settings, best_time_date, num_tranches
+                    )
+
+                    if portfolio_mode:
+                        # filter out other sources since all sources are included
+                        source = os.path.splitext(strat)[0]
+                        best_times_df = best_times_df[best_times_df["Source"] == source]
+
+                    best_times = best_times_df["Top Times"].to_list()
+                    for time in best_times:
                         # get the qty for this tranche time
                         qty = tranche_qtys[best_times.index(time)]
 
                         full_dt = dt.datetime.combine(
                             current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
                         )
-                        source = best_times_df.loc[time]["Source"]
+                        source = best_times_df.loc[
+                            best_times_df["Top Times"] == time, "Source"
+                        ].values[0]
 
                         source_df = df_dict[source]["org_df"]
                         filtered_rows = source_df[
@@ -1169,54 +1323,79 @@ def walk_forward_test(
                             pnl = gross_pnl - commissions
                         else:
                             pnl = filtered_rows["P/L"].sum() * qty
+
                         strat_dict["Current Value"] += pnl
                         strat_dict["Current Day PnL"] += pnl
-
                         # log trade
                         strat_dict["trade log"] = pd.concat(
                             [strat_dict["trade log"], filtered_rows], ignore_index=True
                         )
-                    except KeyError as e:
-                        continue
-            except KeyError as e:
-                continue
 
-            # calc metrics and log the results for the day
-            if strat_dict["Current Value"] >= strat_dict["Highest Value"]:
-                strat_dict["Highest Value"] = strat_dict["Current Value"]
-                strat_dict["DD Days"] = 0
+                num_tranches = strat_dict["Num Tranches"]
+                tranche_qtys = strat_dict["Tranche Qtys"]
+                log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys)
+                if portfolio_mode:
+                    num_tranches = strat_dict["Port Num Tranches"]
+                    tranche_qtys = strat_dict["Port Tranche Qtys"]
+                    log_pnl_and_trades(port_dict, num_tranches, tranche_qtys)
+
+                def calc_metrics(strat_dict: dict, strat: str, results: dict) -> None:
+                    # calc metrics and log the results for the day
+                    if strat_dict["Current Value"] >= strat_dict["Highest Value"]:
+                        strat_dict["Highest Value"] = strat_dict["Current Value"]
+                        strat_dict["DD Days"] = 0
+                    else:
+                        # we are in Drawdown
+                        dd = (
+                            strat_dict["Highest Value"] - strat_dict["Current Value"]
+                        ) / strat_dict["Highest Value"]
+                        strat_dict["Current DD"] = dd
+                        if dd > strat_dict["Max DD"]:
+                            strat_dict["Max DD"] = dd
+                        strat_dict["DD Days"] += 1
+
+                    if strat_dict["Current Day PnL"] > 0:
+                        strat_dict["Win Streak"] += 1
+                        strat_dict["Loss Streak"] = 0
+                    elif strat_dict["Current Day PnL"] < 0:
+                        # tie does not change any streak
+                        strat_dict["Win Streak"] = 0
+                        strat_dict["Loss Streak"] += 1
+
+                    new_row = pd.DataFrame(
+                        [
+                            {
+                                "Date": current_date,
+                                "Current Value": strat_dict["Current Value"],
+                                "Highest Value": strat_dict["Highest Value"],
+                                "Max DD": strat_dict["Max DD"],
+                                "Current DD": strat_dict["Current DD"],
+                                "DD Days": strat_dict["DD Days"],
+                                "Day PnL": strat_dict["Current Day PnL"],
+                                "Win Streak": strat_dict["Win Streak"],
+                                "Loss Streak": strat_dict["Loss Streak"],
+                                "Initial Value": initial_value,
+                                "Weekday": current_weekday,
+                            }
+                        ]
+                    )
+                    results[strat] = pd.concat(
+                        [results[strat], new_row], ignore_index=True
+                    )
+
+                calc_metrics(strat_dict, strat, results)
+                if portfolio_mode:
+                    calc_metrics(port_dict, "Portfolio", results)
             else:
-                # we are in Drawdown
-                dd = (
-                    strat_dict["Highest Value"] - strat_dict["Current Value"]
-                ) / strat_dict["Highest Value"]
-                strat_dict["Current DD"] = dd
-                if dd > strat_dict["Max DD"]:
-                    strat_dict["Max DD"] = dd
-                strat_dict["DD Days"] += 1
-
-            if strat not in results:
-                results[strat] = pd.DataFrame()
-
-            new_row = pd.DataFrame(
-                [
-                    {
-                        "Date": current_date,
-                        "Current Value": strat_dict["Current Value"],
-                        "Highest Value": strat_dict["Highest Value"],
-                        "Max DD": strat_dict["Max DD"],
-                        "Current DD": strat_dict["Current DD"],
-                        "DD Days": strat_dict["DD Days"],
-                        "Day PnL": strat_dict["Current Day PnL"],
-                        "Initial Value": initial_value,
-                        "Weekday": current_weekday,
-                    }
-                ]
-            )
-            results[strat] = pd.concat([results[strat], new_row], ignore_index=True)
+                # this is a skip day just increment the DD days if needed
+                if strat_dict["DD Days"] > 0:
+                    strat_dict["DD Days"] += 1
+                if portfolio_mode and port_dict["DD Days"] > 0:
+                    port_dict["DD Days"] += 1
 
         current_date += dt.timedelta(1)
-    for strat in results:
+
+    for strat in portfolio_metrics:
         results[strat]["Date"] = pd.to_datetime(results[strat]["Date"])
         if export_trades:
             base_filename = f"{strat} - TradeLog_{str(uuid.uuid4())[:8]}"
@@ -1228,12 +1407,11 @@ def walk_forward_test(
 
 
 @with_gc
-def options_window() -> None:
-    global analysis_options
+def options_window(settings) -> None:
     weekday_exclusion_checkboxes = [
         Checkbox(
             day,
-            day in analysis_options["weekday_exclusions"],
+            day in settings["-WEEKDAY_EXCLUSIONS-"],
             key=day,
             font=font,
             size=(6, 1),
@@ -1243,14 +1421,14 @@ def options_window() -> None:
     news_exclusion_checkboxes = [
         Checkbox(
             release,
-            release in analysis_options["news_exclusions"],
+            release in settings["-NEWS_EXCLUSIONS-"],
             key=release,
             font=font,
             size=(11, 1),
         )
         for release in news_events
     ]
-    # break into rows of 4
+    # break into rows of 3
     news_exclusion_checkboxes = chunk_list(news_exclusion_checkboxes, 3)
     layout = [
         [
@@ -1286,16 +1464,16 @@ def options_window() -> None:
                     [
                         Checkbox(
                             "Put or Call",
-                            analysis_options["put_or_call"],
-                            key="put_or_call",
+                            settings["-PUT_OR_CALL-"],
+                            key="-PUT_OR_CALL-",
                             font=font,
                             size=(6, 1),
                             tooltip="Compare selecting the best times to trade only puts or calls",
                         ),
                         Checkbox(
                             "Individual Weekday",
-                            analysis_options["idv_weekday"],
-                            key="idv_weekday",
+                            settings["-IDV_WEEKDAY-"],
+                            key="-IDV_WEEKDAY-",
                             font=font,
                             size=(10, 1),
                             tooltip="Compare selecting the best times for each specific weekday to trade for that weekday",
@@ -1338,14 +1516,14 @@ def options_window() -> None:
             window["-FILE-"].update(news_file)
 
         elif event == "Ok":
-            analysis_options["weekday_exclusions"] = [
+            settings["-WEEKDAY_EXCLUSIONS-"] = [
                 day for day in weekday_list if values[day]
             ]
-            analysis_options["news_exclusions"] = [
+            settings["-NEWS_EXCLUSIONS-"] = [
                 release for release in news_events if values[release]
             ]
-            analysis_options["put_or_call"] = values["put_or_call"]
-            analysis_options["idv_weekday"] = values["idv_weekday"]
+            settings["-PUT_OR_CALL-"] = values["-PUT_OR_CALL-"]
+            settings["-IDV_WEEKDAY-"] = values["-IDV_WEEKDAY-"]
             if values["-FILE-"]:
                 result = import_news_events(values["-FILE-"])
                 if result:
@@ -1417,8 +1595,10 @@ def main():
                                                 "Max DD",
                                                 "Max DD Days",
                                                 "MAR",
-                                                "Biggest Month",
-                                                "Lowest Month",
+                                                "W Strk",
+                                                "L Strk",
+                                                "High Mo",
+                                                "Low Mo",
                                             ],
                                             key="-PNL_TABLE_CHART-",
                                             expand_x=True,
@@ -1529,6 +1709,25 @@ def main():
             sg.Button("Browse"),
         ],
         [
+            Checkbox(
+                "Portfolio Mode",
+                False,
+                key="-PORTFOLIO_MODE-",
+                size=(12, 1),
+                enable_events=True,
+            ),
+            sg.pin(
+                sg.Combo(
+                    [],
+                    key="-STRATEGY_SELECT-",
+                    readonly=True,
+                    visible=False,
+                    enable_events=True,
+                    size=(50, 1),
+                )
+            ),
+        ],
+        [
             sg.Frame(
                 "",
                 [
@@ -1617,7 +1816,7 @@ def main():
                         sg.Push(),
                         Checkbox(
                             "Open Excel files after creation",
-                            True,
+                            False,
                             key="-OPEN_FILES-",
                             size=(20, 1),
                         ),
@@ -1741,6 +1940,7 @@ def main():
     Checkbox.initial(window)
     error = False
     chart_filenames = {}
+    strategy_settings = {}
     test_running = False
     while True:
         event, values = window.read(timeout=100)
@@ -1752,30 +1952,41 @@ def main():
             window["Cancel"].update("Canceling...", disabled=True)
 
         elif event == "Options":
-            options_window()
+            if values["-PORTFOLIO_MODE-"]:
+                selected_strategy = values["-STRATEGY_SELECT-"]
+            else:
+                selected_strategy = "-SINGLE_MODE-"
+            options_window(strategy_settings[selected_strategy])
 
         elif event == "Analyze":
-            try:
-                period1 = int(values["-AVG_PERIOD_1-"])
-                period2 = int(values["-AVG_PERIOD_2-"])
-                weight1 = float(values["-PERIOD_1_WEIGHT-"])
-                weight2 = float(values["-PERIOD_2_WEIGHT-"])
-                top_n = int(values["-TOP_X-"])
-                start_value = float(values["-START_VALUE-"])
-                min_tranches = int(values["-MIN_TRANCHES-"])
-                max_tranches = int(values["-MAX_TRANCHES-"])
-                bp_per_contract = float(values["-BP_PER-"])
-                agg_type = "M" if values["-AGG_TYPE-"] == "Monthly" else "W"
-            except ValueError:
-                sg.popup_no_border(
-                    "Problem with values entered.\nPlease enter only positive whole numbers"
-                )
+            files_list = values["-FILE-"].split(";")
+            for file in files_list:
+                file_ext = os.path.splitext(file)[1].lower()
+                if file_ext != ".csv":
+                    sg.popup_no_border(
+                        "One or more of the selected files\ndo not appear to be a csv file!"
+                    )
+                    error = True
+                    break
+            if error:
+                error = False  # reset
                 continue
 
-            if period1 < 1 or period2 < 1 or period1 > period2:
-                sg.popup_no_border(
-                    "Please make sure both averaging periods are > 0\nand that Trailing Avg 2 is >= to Trailing Avg 1"
-                )
+            if values["-PORTFOLIO_MODE-"]:
+                selected_strategy = values["-STRATEGY_SELECT-"]
+            else:
+                selected_strategy = "-SINGLE_MODE-"
+
+            # Save current settings for the selected strategy
+            if selected_strategy not in strategy_settings:
+                strategy_settings[selected_strategy] = {}
+            update_strategy_settings(values, strategy_settings[selected_strategy])
+
+            # Validate settings for all strategies
+            result = validate_strategy_settings(strategy_settings)
+            if type(result) == str:
+                # there was an error
+                sg.popup_no_border(result)
                 continue
 
             start_date_str = values["-START_DATE-"]
@@ -1801,42 +2012,19 @@ def main():
             else:
                 end_date = None
 
-            files_list = values["-FILE-"].split(";")
-            for file in files_list:
-                file_ext = os.path.splitext(file)[1].lower()
-                if file_ext != ".csv":
-                    sg.popup_no_border(
-                        "One or more of the selected files\ndo not appear to be a csv file!"
-                    )
-                    error = True
-                    break
-            if error:
-                error = False  # reset
-                continue
-
-            if weight1 + weight2 != 100:
-                sg.popup_no_border("Trailing Avg Weights should add up to 100")
-                continue
-
-            else:
-                window["-PROGRESS-"].update(visible=True)
-                window["Analyze"].update("Working...", disabled=True)
-                window["Cancel"].update(visible=True)
-                threading.Thread(
-                    target=lambda: run_analysis_threaded(
-                        files_list,
-                        values["-CALC_TYPE-"],
-                        period1,
-                        weight1 / 100,
-                        period2,
-                        weight2 / 100,
-                        top_n,
-                        values["-OPEN_FILES-"],
-                        agg_type=agg_type,
-                    ),
-                    daemon=True,
-                ).start()
-                test_running = True
+            # All settings validated, proceed with analysis
+            window["-PROGRESS-"].update(visible=True)
+            window["Analyze"].update("Working...", disabled=True)
+            window["Cancel"].update(visible=True)
+            threading.Thread(
+                target=lambda: run_analysis_threaded(
+                    files_list,
+                    strategy_settings,
+                    values["-OPEN_FILES-"],
+                ),
+                daemon=True,
+            ).start()
+            test_running = True
 
         elif event == "Browse":
             files = sg.popup_get_file(
@@ -1846,11 +2034,61 @@ def main():
                 no_window=True,
                 files_delimiter=";",
             )
+            if not files:
+                # user hit cancel
+                continue
+
             if type(files) == tuple:
                 file_str = ";".join(files)
             else:
                 file_str = files
             window["-FILE-"].update(file_str)
+
+            strategy_settings.clear()  # reset strategy settings
+            if values["-PORTFOLIO_MODE-"]:
+                strategies = [os.path.basename(file) for file in file_str.split(";")]
+                window["-STRATEGY_SELECT-"].update(values=strategies)
+                if strategies:
+                    # select the first strategy in the list
+                    window["-STRATEGY_SELECT-"].update(value=strategies[0])
+            else:
+                strategies = ["-SINGLE_MODE-"]
+                window["-STRATEGY_SELECT-"].update(values=[])
+
+            # Initialize settings for each strategy
+            for strategy in strategies:
+                strategy_settings[strategy] = {}
+                update_strategy_settings(values, strategy_settings[strategy])
+
+            # We must continue so the GUI does not update with old values from the values dict
+            continue
+
+        elif event == "-PORTFOLIO_MODE-":
+            portfolio_mode = values["-PORTFOLIO_MODE-"]
+            window["-STRATEGY_SELECT-"].update(visible=portfolio_mode)
+
+            if portfolio_mode:
+                files = values["-FILE-"].split(";")
+                strategies = [os.path.basename(file) for file in files]
+                window["-STRATEGY_SELECT-"].update(values=strategies)
+                if strategies:
+                    # select the first strategy in the list
+                    window["-STRATEGY_SELECT-"].update(value=strategies[0])
+            else:
+                strategies = ["-SINGLE_MODE-"]
+
+            # Initialize settings for each strategy
+            strategy_settings.clear()
+            for strategy in strategies:
+                strategy_settings[strategy] = {}
+                update_strategy_settings(values, strategy_settings[strategy])
+
+        elif event == "-STRATEGY_SELECT-":
+            selected_strategy = values["-STRATEGY_SELECT-"]
+            if selected_strategy in strategy_settings:
+                for key, value in strategy_settings[selected_strategy].items():
+                    if key in window.AllKeysDict:
+                        window[key].update(format_float(value))
 
         elif event == "__TIMEOUT__":
             if chart_filenames:
@@ -1866,6 +2104,20 @@ def main():
                     resized_image = resize_image(filename, image_size)
                     window[chart].update(data=resized_image)
 
+        # Update strategy settings when values change but while analysis is running
+        if (
+            values["-PORTFOLIO_MODE-"]
+            and values["-STRATEGY_SELECT-"]
+            and not test_running
+        ):
+            selected_strategy = values["-STRATEGY_SELECT-"]
+            update_strategy_settings(values, strategy_settings[selected_strategy])
+        elif not values["-PORTFOLIO_MODE-"] and not test_running:
+            if "-SINGLE_MODE-" not in strategy_settings:
+                strategy_settings["-SINGLE_MODE-"] = {}
+            update_strategy_settings(values, strategy_settings["-SINGLE_MODE-"])
+
+        # check if thread is done
         while True:
             try:
                 result_key, results = results_queue.get(block=False)
@@ -1876,15 +2128,8 @@ def main():
                 df_dicts = results
                 for right_type, day_dict in df_dicts.items():
                     for day, df_dict in day_dict.items():
-                        top_times_df = get_top_times(df_dict, top_n, agg_type=agg_type)
-                        if values["-CALC_TYPE-"] == "PnL":
-                            top_times_df["Values"] = top_times_df["Values"].apply(
-                                lambda x: f"{x:.2f}"
-                            )
-                        else:
-                            top_times_df["Values"] = top_times_df["Values"].apply(
-                                lambda x: f"{x * 100:.2f}%"
-                            )
+
+                        top_times_df = get_top_times(df_dict, strategy_settings)
                         table_data = top_times_df.values.tolist()
                         window[f"-TABLE_{day}_{right_type}-"].update(
                             values=table_data, num_rows=len(table_data)
@@ -1899,17 +2144,11 @@ def main():
                         target=lambda: walk_forward_test(
                             df_dicts,
                             path,
-                            period1,
-                            period2,
-                            top_n,
-                            initial_value=start_value,
+                            strategy_settings,
+                            initial_value=float(values["-START_VALUE-"]),
                             start=start_date,
                             end=end_date,
                             use_scaling=values["-SCALING-"],
-                            min_tranches=max(min_tranches, 1),
-                            max_tranches=max(max_tranches, 1),
-                            bp_per_contract=bp_per_contract,
-                            agg_type=agg_type,
                             export_trades=values["-EXPORT-"],
                         ),
                         daemon=True,
