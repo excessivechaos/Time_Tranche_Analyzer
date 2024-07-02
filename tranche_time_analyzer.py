@@ -1557,7 +1557,7 @@ def options_window(settings) -> None:
         ],
     ]
     # window_size = (int(screen_size[0] * 0.4), int(screen_size[1] * 0.48))
-    window_size = (int(640 * dpi_scale), int(520 * dpi_scale))
+    window_size = (int(660 * dpi_scale), int(580 * dpi_scale))
     window = sg.Window(
         "Options",
         layout,
@@ -1571,7 +1571,6 @@ def options_window(settings) -> None:
     Checkbox.initial(window)
     while True:
         event, values = window.read()
-
         if event in (sg.WIN_CLOSED, "Cancel"):
             break
 
