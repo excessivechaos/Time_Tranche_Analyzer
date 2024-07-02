@@ -1557,7 +1557,7 @@ def options_window(settings) -> None:
         ],
     ]
     # window_size = (int(screen_size[0] * 0.4), int(screen_size[1] * 0.48))
-    window_size = (int(600 * dpi_scale), int(500 * dpi_scale))
+    window_size = (int(640 * dpi_scale), int(520 * dpi_scale))
     window = sg.Window(
         "Options",
         layout,
