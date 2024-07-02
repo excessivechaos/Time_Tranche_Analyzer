@@ -529,6 +529,13 @@ def get_pnl_plot(results, filename):
         end_dt = df["Date"].iloc[-1]
         years = (end_dt - start_dt).days / 365.25
         cagr = ((final_value / initial_value) ** (1 / years)) - 1
+        
+        # Sharpe Ratio
+        df['Daily Return'] = df['Current Value'].pct_change()
+        std_dev = df['Daily Return'].std()
+        risk_free_rate = 0.02 / 252  # Assume 2% annual risk-free rate, convert to daily
+        excess_returns = df['Daily Return'] - risk_free_rate
+        sharpe_ratio = np.sqrt(252) * excess_returns.mean() / std_dev  # Annualized
 
         if max_dd:
             mar = cagr / max_dd
@@ -562,11 +569,12 @@ def get_pnl_plot(results, filename):
             f"{cagr:.2%}",
             f"{max_dd:.2%}",
             f"{dd_days}",
-            f"{mar:.2f}",
             f"{win_streak}",
             f"{loss_streak}",
             largest_monthly_pnl_str,
             lowest_monthly_pnl_str,
+            f"{mar:.2f}",
+            f"{sharpe_ratio:.2f}",
         ]
 
         table_data.append(row_data)
@@ -1664,11 +1672,12 @@ def main():
                                                 "CAGR",
                                                 "Max DD",
                                                 "Max DD Days",
-                                                "MAR",
                                                 "W Strk",
                                                 "L Strk",
                                                 "High Mo",
                                                 "Low Mo",
+                                                "MAR",
+                                                "Sharpe",
                                             ],
                                             key="-PNL_TABLE_CHART-",
                                             expand_x=True,
