@@ -26,7 +26,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.8.4"
+__version__ = "v.1.8.5"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1521,14 +1521,17 @@ def walk_forward_test(
                     )
 
                 calc_metrics(strat_dict, strat, results)
-                if portfolio_mode:
-                    calc_metrics(port_dict, "Portfolio", results)
+
             else:
                 # this is a skip day just increment the DD days if needed
                 if strat_dict["DD Days"] > 0:
                     strat_dict["DD Days"] += 1
                 if portfolio_mode and port_dict["DD Days"] > 0:
                     port_dict["DD Days"] += 1
+
+        # calculate all the stats for the portfolio now that all other strats have traded
+        if portfolio_mode and not skip_day:
+            calc_metrics(port_dict, "Portfolio", results)
 
         current_date += dt.timedelta(1)
 
