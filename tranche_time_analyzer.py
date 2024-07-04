@@ -540,7 +540,7 @@ def get_monthly_pnl_chart(results, filename):
 
         plt.bar(x + i * width, pnl_values, width, label=strategy, alpha=0.8)
 
-    plt.title("Monthly PnL by Strategy")
+    plt.title("Monthly PnL")
     plt.xlabel("Month")
     plt.ylabel("PnL")
     plt.legend()
