@@ -26,7 +26,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.8.3"
+__version__ = "v.1.8.4"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -795,6 +795,7 @@ def get_top_times(
 
     if not portfolio_mode:
         # Sort all values based on RawValue and select the overall top n
+        result_df = result_df.loc[result_df.groupby("Top Times")["RawValue"].idxmax()]
         result_df = result_df.sort_values("RawValue", ascending=False).head(top_n)
 
     # Drop the RawValue column as it's no longer needed
