@@ -26,7 +26,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.8.5"
+__version__ = "v.1.8.6"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -301,9 +301,14 @@ def analyze(
         start_date = df["Date Opened"].min().date()
         end_date = df["Date Opened"].max().date()
 
-    df_output_combined, df_output_1mo_avg_combined = perform_analysis(
-        df_grouped_combined
-    )
+    if df.empty:
+        df_output_combined, df_output_1mo_avg_combined = pd.DataFrame(
+            columns=["Date Range"]
+        ), pd.DataFrame(columns=["Date Range"])
+    else:
+        df_output_combined, df_output_1mo_avg_combined = perform_analysis(
+            df_grouped_combined
+        )
     if df[df["OptionType"] == "P"].empty or not settings["-PUT_OR_CALL-"]:
         df_output_puts, df_output_1mo_avg_puts = pd.DataFrame(
             columns=["Date Range"]
