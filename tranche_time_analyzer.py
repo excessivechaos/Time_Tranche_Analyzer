@@ -26,7 +26,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.8.6"
+__version__ = "v.1.8.7"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -266,15 +266,16 @@ def analyze(
 
     # get list of news event dates to skip.
     news_date_exclusions = []
-    for release, date_list in news_events.items():
-        if release in settings["-NEWS_EXCLUSIONS-"]:
-            news_date_exclusions += date_list
+    if not settings["-KEEP_EXCLUSIONS-"]:
+        for release, date_list in news_events.items():
+            if release in settings["-NEWS_EXCLUSIONS-"]:
+                news_date_exclusions += date_list
 
-    # filter df for news exclusions
-    df = df[~df["EntryTime"].dt.date.isin(news_date_exclusions)]
+        # filter df for news exclusions
+        df = df[~df["EntryTime"].dt.date.isin(news_date_exclusions)]
 
-    # filter for weekday exlusions
-    df = df[~df["Day of Week"].isin(settings["-WEEKDAY_EXCLUSIONS-"])]
+        # filter for weekday exlusions
+        df = df[~df["Day of Week"].isin(settings["-WEEKDAY_EXCLUSIONS-"])]
 
     if is_BYOB_data(df):
         df_grouped_combined = df.groupby(
@@ -1162,6 +1163,7 @@ def update_strategy_settings(values, settings):
         "-NEWS_EXCLUSIONS-",
         "-PUT_OR_CALL-",
         "-IDV_WEEKDAY-",
+        "-KEEP_EXCLUSIONS-",
     ]:
         if option not in settings:
             settings[option] = [] if option.endswith("EXCLUSIONS-") else False
@@ -1638,6 +1640,14 @@ def options_window(settings) -> None:
                             size=(10, 1),
                             tooltip="Compare selecting the best times for each specific weekday to trade for that weekday",
                         ),
+                        Checkbox(
+                            "Keep Exclusions in Analysis",
+                            settings["-KEEP_EXCLUSIONS-"],
+                            key="-KEEP_EXCLUSIONS-",
+                            font=font,
+                            size=(13, 1),
+                            tooltip="Keep the excluded events/weekdays in the analysis of best times.\nIf set, then the exclusions will only apply to the walk forward test.",
+                        ),
                     ]
                 ],
                 expand_x=True,
@@ -1701,6 +1711,7 @@ def options_window(settings) -> None:
             ]
             settings["-PUT_OR_CALL-"] = values["-PUT_OR_CALL-"]
             settings["-IDV_WEEKDAY-"] = values["-IDV_WEEKDAY-"]
+            settings["-KEEP_EXCLUSIONS-"] = values["-KEEP_EXCLUSIONS-"]
             if values["-FILE-"] and values["-FILE-"] != "Loaded":
                 result = import_news_events(values["-FILE-"])
                 if result:
