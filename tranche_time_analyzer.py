@@ -26,7 +26,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.8.7"
+__version__ = "v.1.8.8"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -344,7 +344,10 @@ def create_excel_file(
     long_avg_period = settings["-AVG_PERIOD_2-"]
     long_weight = settings["-PERIOD_2_WEIGHT-"] / 100
     top_x = settings["-TOP_X-"]
-    weekday_exclusions = settings["-WEEKDAY_EXCLUSIONS-"]
+    if settings["-KEEP_EXCLUSIONS-"]:
+        weekday_exclusions = []
+    else:
+        weekday_exclusions = settings["-WEEKDAY_EXCLUSIONS-"]
     result = load_data(file, weekday_exclusions)
     if result:
         df, start_date, end_date = result
