@@ -1,24 +1,29 @@
-import pandas as pd
-import numpy as np
-import datetime as dt
-from openpyxl.utils import get_column_letter
-import PySimpleGUI as sg
-import os, threading, queue, gc, functools
-import subprocess, platform
-from typing import Tuple
-import ctypes
 import base64
-from io import BytesIO
-from PIL import Image, ImageTk
-from dateutil import parser
-from dateutil.relativedelta import relativedelta
-import matplotlib
+import ctypes
+import datetime as dt
+import functools
+import gc
+import os
+import json
+import platform
+import queue
+import subprocess
+import threading
 import uuid
 import webbrowser
+from io import BytesIO
+from typing import Tuple
+import matplotlib
+import numpy as np
+import pandas as pd
+import PySimpleGUI as sg
+from dateutil import parser
+from dateutil.relativedelta import relativedelta
+from openpyxl.utils import get_column_letter
+from PIL import Image, ImageTk
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
-
 
 # make app dpi aware
 try:
@@ -26,7 +31,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.8.8"
+__version__ = "v.1.9.0"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -40,6 +45,9 @@ if True:  # code collapse for base64 strings
 
 
 sg.theme("Reddit")
+themes = {"Light": "Reddit", "Dark1": "Dark", "Dark2": "DarkGrey11", "Dark3": "Black"}
+# themes = {theme:theme for theme in sg.theme_list()}
+button_color = sg.theme_button_color()  # get button color from reddit theme
 if sg.running_windows():
     font = ("Segoe UI", 12)
 else:
@@ -526,7 +534,7 @@ def format_float(value):
 
 
 @with_gc
-def get_monthly_pnl_chart(results, filename):
+def get_monthly_pnl_chart(results):
     plt.figure(figsize=(12, 6))
 
     # Get all unique months across all strategies
@@ -563,12 +571,18 @@ def get_monthly_pnl_chart(results, filename):
     )
 
     plt.tight_layout()
-    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    # buffer for saving data
+    buf = BytesIO()
+    plt.savefig(buf, dpi=150, bbox_inches="tight")
+    buf.seek(0)
+    # Convert PNG to base64 string
+    img_str = base64.b64encode(buf.getvalue())
     plt.close()
+    return img_str
 
 
 @with_gc
-def get_pnl_plot(results, filename):
+def get_pnl_plot(results):
     table_data = []
     plt.figure(figsize=(8, 4))
     for strategy, df in results.items():
@@ -644,13 +658,18 @@ def get_pnl_plot(results, filename):
     # plt.xticks(rotation=45)
     plt.tight_layout()
 
-    plt.savefig(filename, dpi=150)
+    # buffer for saving data
+    buf = BytesIO()
+    plt.savefig(buf, dpi=150)
+    buf.seek(0)
+    # Convert PNG to base64 string
+    img_str = base64.b64encode(buf.getvalue())
     plt.close()
-    return table_data
+    return table_data, img_str
 
 
 @with_gc
-def get_news_event_pnl_chart(results, filename, sum=True):
+def get_news_event_pnl_chart(results, sum=True):
     # Get list of news events
     events = list(news_events.keys())
 
@@ -696,12 +715,18 @@ def get_news_event_pnl_chart(results, filename, sum=True):
 
     fig.subplots_adjust(bottom=0.3)
     plt.tight_layout()
-    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    # buffer for saving data
+    buf = BytesIO()
+    plt.savefig(buf, dpi=150, bbox_inches="tight")
+    buf.seek(0)
+    # Convert PNG to base64 string
+    img_str = base64.b64encode(buf.getvalue())
     plt.close()
+    return img_str
 
 
 @with_gc
-def get_weekday_pnl_chart(results, filename):
+def get_weekday_pnl_chart(results):
     # Filter weekdays based on exclusions
     weekdays = [day[:3] for day in weekday_list]
 
@@ -736,8 +761,14 @@ def get_weekday_pnl_chart(results, filename):
     )
     fig.subplots_adjust(bottom=0.2)
     plt.tight_layout()
-    plt.savefig(filename, dpi=150, bbox_inches="tight")
+    # buffer for saving data
+    buf = BytesIO()
+    plt.savefig(buf, dpi=150, bbox_inches="tight")
+    buf.seek(0)
+    # Convert PNG to base64 string
+    img_str = base64.b64encode(buf.getvalue())
     plt.close()
+    return img_str
 
 
 def get_top_times(
@@ -1055,9 +1086,9 @@ def resize_image(image_path, size):
     """Resize the image to the specified size."""
     img = Image.open(image_path)
     img = img.resize(size, Image.LANCZOS)
-    bio = BytesIO()
-    img.save(bio, format="PNG")
-    return bio.getvalue()
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def resize_base64_image(base64_image, desired_height):
@@ -1076,11 +1107,11 @@ def resize_base64_image(base64_image, desired_height):
     # Resize the image
     resized_image = image.resize((new_width, new_height), Image.LANCZOS)
     # Save the resized image to a bytes buffer
-    buffered = BytesIO()
-    resized_image.save(buffered, format="PNG")
+    buf = BytesIO()
+    resized_image.save(buf, format="PNG")
 
     # Encode the resized image to base64
-    return base64.b64encode(buffered.getvalue())
+    return base64.b64encode(buf.getvalue())
 
 
 @with_gc
@@ -1144,6 +1175,14 @@ def run_analysis_threaded(
     return df_dicts
 
 
+def save_settings(settings, settings_filename, values):
+    for key in settings:
+        settings[key] = values[key]
+    os.makedirs(os.path.dirname(settings_filename), exist_ok=True)
+    with open(settings_filename, "w") as f:
+        json.dump(settings, f, indent=4)
+
+
 def update_strategy_settings(values, settings):
     settings.update(
         {
@@ -1167,6 +1206,7 @@ def update_strategy_settings(values, settings):
         "-PUT_OR_CALL-",
         "-IDV_WEEKDAY-",
         "-KEEP_EXCLUSIONS-",
+        "-AUTO_EXCLUSIONS-",
     ]:
         if option not in settings:
             settings[option] = [] if option.endswith("EXCLUSIONS-") else False
@@ -1233,22 +1273,30 @@ def walk_forward_test(
         if _end_date < end_date:
             end_date = _end_date
 
-    if not start:
-        # find the first date the data is fully warmed up
-        max_long_avg_period = max(
-            [
-                max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"])
-                for settings in strategy_settings.values()
-            ]
-        )
-        date_adv = start_date + relativedelta(months=max_long_avg_period)
-        start = dt.date(date_adv.year, date_adv.month, 1)
+    max_long_avg_period = max(
+        [
+            max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"])
+            for settings in strategy_settings.values()
+        ]
+    )
+    date_adv = start_date + relativedelta(months=max_long_avg_period)
+    warm_start = dt.date(date_adv.year, date_adv.month, 1)
+    # use either the user input date or the first warmed up date
+    if start:
+        start_test_date = max(warm_start, start)
     else:
-        # use either the user input date or the first date in the dateset
-        # whichever is later.  The data may not be warmed up, but the user
-        # has overriden this.
-        start = max(start_date, start)
+        start_test_date = warm_start
     end = end_date if end is None else end
+
+    # check if any strats are using auto exclusion
+    warm_up_date = start_test_date
+    using_auto_exclusions = False
+    for setting in strategy_settings.values():
+        if setting["-AUTO_EXCLUSIONS-"]:
+            # set the warmup date
+            warm_up_date = warm_start + relativedelta(months=max_long_avg_period)
+            using_auto_exclusions = True
+            break
 
     if not portfolio_mode:
         settings = strategy_settings["-SINGLE_MODE-"]
@@ -1275,6 +1323,7 @@ def walk_forward_test(
             "Num Tranches": 1,
             "Port Num Tranches": 1,
             "trade log": pd.DataFrame(),
+            "Tlog Auto Exclusions": pd.DataFrame(),  # for warm-up to calc EV for auto exclusions
             "Win Streak": 0,
             "Loss Streak": 0,
         }
@@ -1290,14 +1339,74 @@ def walk_forward_test(
     # convert weekdays from full day name to short name. i.e. Monday to Mon
     day_list = [_day[:3] for _day in weekday_list]
 
-    current_date = start
-    skip_day = False
+    def determine_auto_skip(date: dt.date, tlog: pd.DataFrame, agg_type: str) -> bool:
+        """
+        Calculate the expected value of any news events that
+        occur on the given date and return True if negative expectancy
+        """
+        current_weekday = date.strftime("%a")
+        agg_type = "ME" if agg_type == "Monthly" else "W-SAT"
+        trade_log = tlog.copy()
+        trade_log["EntryTime"] = pd.to_datetime(trade_log["EntryTime"])
+        if is_BYOB_data(trade_log):
+            trade_log["P/L"] = (
+                trade_log["ProfitLossAfterSlippage"] * 100 - trade_log["CommissionFees"]
+            )
+
+        def _get_current_rolling_avg(df):
+            # Set 'EntryTime' as the index
+            df = df.set_index("EntryTime")
+            # Resample to monthly or weekly frequency, summing the PNL
+            aggregated_pnl = df["P/L"].resample(agg_type).sum()
+            # Calculate the rolling average
+            window = (
+                max_long_avg_period
+                if agg_type == "ME"
+                else int(max_long_avg_period * 4.33)
+            )
+            rolling_avg_pnl = aggregated_pnl.rolling(
+                window=window, min_periods=1
+            ).mean()
+            if not rolling_avg_pnl.empty:
+                return rolling_avg_pnl.iloc[-1]
+            else:
+                return 0
+
+        # find the events that occur on this date and calc the expectancy
+        for event, date_list in news_events.items():
+            if date in date_list:
+                trade_log_filtered = trade_log[
+                    trade_log["EntryTime"].dt.date.isin(date_list)
+                ]
+                if not trade_log_filtered.empty:
+                    current_avg = _get_current_rolling_avg(trade_log_filtered)
+                    if current_avg < 0:
+                        # this event has negative expectancy, whole day can be skipped
+                        return True
+
+        # passed all news events, lets see if we skip the weekday
+        trade_log_filtered = trade_log[
+            trade_log["Day of Week"].str.contains(current_weekday)
+        ]
+        if not trade_log_filtered.empty:
+            current_avg = _get_current_rolling_avg(trade_log_filtered)
+            if current_avg < 0:
+                # this dat has negative expectancy, whole day can be skipped
+                return True
+        return False
+
+    if using_auto_exclusions:
+        current_date = warm_start
+    else:
+        current_date = start_test_date
     while current_date <= end:
         # check for cancel flag to stop thread
         if cancel_flag.is_set():
             cancel_flag.clear()
             results_queue.put(("-BACKTEST_CANCELED-", ""))
             return
+
+        warmed_up = current_date >= warm_up_date
 
         if portfolio_mode:
             # reset daily pnl for portfolio
@@ -1324,215 +1433,214 @@ def walk_forward_test(
                     news_date_exclusions += date_list
 
             skip_day = False
-            if (
+            if warmed_up and using_auto_exclusions:
+                skip_day = determine_auto_skip(
+                    current_date,
+                    strat_dict["Tlog Auto Exclusions"],
+                    settings["-AGG_TYPE-"],
+                )
+            elif (
                 current_weekday in day_exlusions
                 or current_weekday not in day_list
                 or current_date in news_date_exclusions
             ):
                 skip_day = True
 
-            if not skip_day:
-                if use_scaling:
+            if use_scaling:
 
-                    def determine_num_tranches(
-                        min_tranches, max_tranches, num_contracts
-                    ):
-                        tranches = max_tranches
-                        while True:
-                            if num_contracts > tranches:
-                                max_tranche_qty = int(num_contracts / tranches)
-                                remain_qty = num_contracts - (
-                                    tranches * max_tranche_qty
-                                )
-                                if remain_qty >= min_tranches or remain_qty == 0:
-                                    # we're done we can stay at this number of tranches with
-                                    # the remainder filling up another set of at least min tranches
+                def determine_num_tranches(min_tranches, max_tranches, num_contracts):
+                    tranches = max_tranches
+                    while True:
+                        if num_contracts > tranches:
+                            max_tranche_qty = int(num_contracts / tranches)
+                            remain_qty = num_contracts - (tranches * max_tranche_qty)
+                            if remain_qty >= min_tranches or remain_qty == 0:
+                                # we're done we can stay at this number of tranches with
+                                # the remainder filling up another set of at least min tranches
+                                return tranches
+                            else:
+                                # we need to take a tranche away so we can try to fill up at
+                                # least 1 full set at min amount
+                                if tranches - 1 < min_tranches:
+                                    # we can't reduce any further, got with what we have
+                                    # even if that means we will be adding contracts below the min
                                     return tranches
                                 else:
-                                    # we need to take a tranche away so we can try to fill up at
-                                    # least 1 full set at min amount
-                                    if tranches - 1 < min_tranches:
-                                        # we can't reduce any further, got with what we have
-                                        # even if that means we will be adding contracts below the min
-                                        return tranches
-                                    else:
-                                        tranches -= 1
-                            else:
-                                return num_contracts
+                                    tranches -= 1
+                        else:
+                            return num_contracts
 
-                    def determine_tranche_qtys(tranches):
-                        tranche_qtys = []
-                        for x in range(tranches):
-                            if x < num_contracts % tranches:
-                                # this is where we add the remaining contracts after filling up all tranches
-                                tranche_qtys.append(int(num_contracts / tranches) + 1)
-                            else:
-                                tranche_qtys.append(int(num_contracts / tranches))
-                        return tranche_qtys
+                def determine_tranche_qtys(tranches):
+                    tranche_qtys = []
+                    for x in range(tranches):
+                        if x < num_contracts % tranches:
+                            # this is where we add the remaining contracts after filling up all tranches
+                            tranche_qtys.append(int(num_contracts / tranches) + 1)
+                        else:
+                            tranche_qtys.append(int(num_contracts / tranches))
+                    return tranche_qtys
 
-                    min_tranches = settings["-MIN_TRANCHES-"]
-                    max_tranches = settings["-MAX_TRANCHES-"]
-                    bp_per_contract = settings["-BP_PER-"]
-                    num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
+                min_tranches = settings["-MIN_TRANCHES-"]
+                max_tranches = settings["-MAX_TRANCHES-"]
+                bp_per_contract = settings["-BP_PER-"]
+                num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
+                tranches = determine_num_tranches(
+                    min_tranches, max_tranches, num_contracts
+                )
+                strat_dict["Num Tranches"] = tranches
+                strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
+                if portfolio_mode:
+                    equal_value = port_dict["Current Value"] / (
+                        len(portfolio_metrics) - 1
+                    )
+                    num_contracts = int(equal_value / bp_per_contract)
                     tranches = determine_num_tranches(
                         min_tranches, max_tranches, num_contracts
                     )
-                    strat_dict["Num Tranches"] = tranches
-                    strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
-                    if portfolio_mode:
-                        equal_value = port_dict["Current Value"] / (
-                            len(portfolio_metrics) - 1
-                        )
-                        num_contracts = int(equal_value / bp_per_contract)
-                        tranches = determine_num_tranches(
-                            min_tranches, max_tranches, num_contracts
-                        )
-                        strat_dict["Port Num Tranches"] = tranches
-                        strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(
-                            tranches
-                        )
-                else:
-                    # not scaling
-                    num_contracts = settings["-TOP_X-"]
-                    strat_dict["Num Tranches"] = num_contracts
-                    strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
-                    strat_dict["Port Num Tranches"] = num_contracts
-                    strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
+                    strat_dict["Port Num Tranches"] = tranches
+                    strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(tranches)
+            else:
+                # not scaling
+                num_contracts = settings["-TOP_X-"]
+                strat_dict["Num Tranches"] = num_contracts
+                strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
+                strat_dict["Port Num Tranches"] = num_contracts
+                strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
 
-                if settings["-AGG_TYPE-"] == "Monthly":
-                    # date for best times should be the month prior as we don't know the future yet
-                    best_time_date = current_date - relativedelta(months=1)
-                else:
-                    # grab from last week
-                    best_time_date = current_date - relativedelta(weeks=1)
+            if settings["-AGG_TYPE-"] == "Monthly":
+                # date for best times should be the month prior as we don't know the future yet
+                best_time_date = current_date - relativedelta(months=1)
+            else:
+                # grab from last week
+                best_time_date = current_date - relativedelta(weeks=1)
 
-                def log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys):
-                    if portfolio_mode:
-                        if settings["-PUT_OR_CALL-"] and settings["-IDV_WEEKDAY-"]:
-                            df_dict = df_dicts["Best P/C"][current_weekday]
-                        elif settings["-PUT_OR_CALL-"]:
-                            df_dict = df_dicts["Best P/C"]["All"]
-                        elif settings["-IDV_WEEKDAY-"]:
-                            df_dict = df_dicts["Put/Call Comb"][current_weekday]
-                        else:
-                            df_dict = df_dicts["Put/Call Comb"]["All"]
+            def log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys):
+                if portfolio_mode:
+                    if settings["-PUT_OR_CALL-"] and settings["-IDV_WEEKDAY-"]:
+                        df_dict = df_dicts["Best P/C"][current_weekday]
+                    elif settings["-PUT_OR_CALL-"]:
+                        df_dict = df_dicts["Best P/C"]["All"]
+                    elif settings["-IDV_WEEKDAY-"]:
+                        df_dict = df_dicts["Put/Call Comb"][current_weekday]
                     else:
-                        if strat == "All-P_C_Comb":
-                            df_dict = df_dicts["Put/Call Comb"]["All"]
-                        elif strat == "Weekday-P_C_Comb":
-                            df_dict = df_dicts["Put/Call Comb"][current_weekday]
-                        elif strat == "All-Best_P_or_C":
-                            df_dict = df_dicts["Best P/C"]["All"]
-                        elif strat == "Weekday-Best_P_or_C":
-                            df_dict = df_dicts["Best P/C"][current_weekday]
+                        df_dict = df_dicts["Put/Call Comb"]["All"]
+                else:
+                    if strat == "All-P_C_Comb":
+                        df_dict = df_dicts["Put/Call Comb"]["All"]
+                    elif strat == "Weekday-P_C_Comb":
+                        df_dict = df_dicts["Put/Call Comb"][current_weekday]
+                    elif strat == "All-Best_P_or_C":
+                        df_dict = df_dicts["Best P/C"]["All"]
+                    elif strat == "Weekday-Best_P_or_C":
+                        df_dict = df_dicts["Best P/C"][current_weekday]
 
-                    best_times_df = get_top_times(
-                        df_dict, strategy_settings, best_time_date, num_tranches
+                best_times_df = get_top_times(
+                    df_dict, strategy_settings, best_time_date, num_tranches
+                )
+
+                if portfolio_mode:
+                    # filter out other sources since all sources are included
+                    source = os.path.splitext(strat)[0]
+                    best_times_df = best_times_df[
+                        best_times_df["Source"].str.endswith(source)
+                    ]
+
+                best_times = best_times_df["Top Times"].to_list()
+                for time in best_times:
+                    # get the qty for this tranche time
+                    qty = tranche_qtys[best_times.index(time)]
+
+                    full_dt = dt.datetime.combine(
+                        current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
                     )
+                    source = best_times_df.loc[
+                        best_times_df["Top Times"] == time, "Source"
+                    ].values[0]
 
-                    if portfolio_mode:
-                        # filter out other sources since all sources are included
-                        source = os.path.splitext(strat)[0]
-                        best_times_df = best_times_df[
-                            best_times_df["Source"].str.endswith(source)
-                        ]
+                    source_df = df_dict[source]["org_df"]
+                    filtered_rows = source_df[source_df["EntryTime"] == full_dt].copy()
 
-                    best_times = best_times_df["Top Times"].to_list()
-                    for time in best_times:
-                        # get the qty for this tranche time
-                        qty = tranche_qtys[best_times.index(time)]
+                    if filtered_rows.empty:
+                        continue
 
-                        full_dt = dt.datetime.combine(
-                            current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
+                    filtered_rows["qty"] = qty
+                    filtered_rows["source"] = source
+
+                    if is_BYOB_data(source_df):
+                        gross_pnl = (
+                            filtered_rows["ProfitLossAfterSlippage"].sum() * 100 * qty
                         )
-                        source = best_times_df.loc[
-                            best_times_df["Top Times"] == time, "Source"
-                        ].values[0]
+                        commissions = filtered_rows["CommissionFees"].sum() * qty
+                        pnl = gross_pnl - commissions
+                    else:
+                        pnl = filtered_rows["P/L"].sum() * qty
 
-                        source_df = df_dict[source]["org_df"]
-                        filtered_rows = source_df[
-                            source_df["EntryTime"] == full_dt
-                        ].copy()
-
-                        if filtered_rows.empty:
-                            continue
-
-                        filtered_rows["qty"] = qty
-                        filtered_rows["source"] = source
-
-                        if is_BYOB_data(source_df):
-                            gross_pnl = (
-                                filtered_rows["ProfitLossAfterSlippage"].sum()
-                                * 100
-                                * qty
-                            )
-                            commissions = filtered_rows["CommissionFees"].sum() * qty
-                            pnl = gross_pnl - commissions
-                        else:
-                            pnl = filtered_rows["P/L"].sum() * qty
-
-                        strat_dict["Current Value"] += pnl
-                        strat_dict["Current Day PnL"] += pnl
-                        # log trade
+                    # log trade
+                    strat_dict["Tlog Auto Exclusions"] = pd.concat(
+                        [strat_dict["Tlog Auto Exclusions"], filtered_rows],
+                        ignore_index=True,
+                    )
+                    if warmed_up and not skip_day:
                         strat_dict["trade log"] = pd.concat(
                             [strat_dict["trade log"], filtered_rows], ignore_index=True
                         )
+                        strat_dict["Current Value"] += pnl
+                        strat_dict["Current Day PnL"] += pnl
 
-                num_tranches = strat_dict["Num Tranches"]
-                tranche_qtys = strat_dict["Tranche Qtys"]
-                log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys)
-                if portfolio_mode:
-                    num_tranches = strat_dict["Port Num Tranches"]
-                    tranche_qtys = strat_dict["Port Tranche Qtys"]
-                    log_pnl_and_trades(port_dict, num_tranches, tranche_qtys)
+            num_tranches = strat_dict["Num Tranches"]
+            tranche_qtys = strat_dict["Tranche Qtys"]
+            log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys)
+            if portfolio_mode:
+                num_tranches = strat_dict["Port Num Tranches"]
+                tranche_qtys = strat_dict["Port Tranche Qtys"]
+                log_pnl_and_trades(port_dict, num_tranches, tranche_qtys)
 
-                def calc_metrics(strat_dict: dict, strat: str, results: dict) -> None:
-                    # calc metrics and log the results for the day
-                    if strat_dict["Current Value"] >= strat_dict["Highest Value"]:
-                        strat_dict["Highest Value"] = strat_dict["Current Value"]
-                        strat_dict["DD Days"] = 0
-                    else:
-                        # we are in Drawdown
-                        dd = (
-                            strat_dict["Highest Value"] - strat_dict["Current Value"]
-                        ) / strat_dict["Highest Value"]
-                        strat_dict["Current DD"] = dd
-                        if dd > strat_dict["Max DD"]:
-                            strat_dict["Max DD"] = dd
-                        strat_dict["DD Days"] += 1
+            def calc_metrics(strat_dict: dict, strat: str, results: dict) -> None:
+                # calc metrics and log the results for the day
+                if strat_dict["Current Value"] >= strat_dict["Highest Value"]:
+                    strat_dict["Highest Value"] = strat_dict["Current Value"]
+                    strat_dict["DD Days"] = 0
+                else:
+                    # we are in Drawdown
+                    dd = (
+                        strat_dict["Highest Value"] - strat_dict["Current Value"]
+                    ) / strat_dict["Highest Value"]
+                    strat_dict["Current DD"] = dd
+                    if dd > strat_dict["Max DD"]:
+                        strat_dict["Max DD"] = dd
+                    strat_dict["DD Days"] += 1
 
-                    if strat_dict["Current Day PnL"] > 0:
-                        strat_dict["Win Streak"] += 1
-                        strat_dict["Loss Streak"] = 0
-                    elif strat_dict["Current Day PnL"] < 0:
-                        # tie does not change any streak
-                        strat_dict["Win Streak"] = 0
-                        strat_dict["Loss Streak"] += 1
+                if strat_dict["Current Day PnL"] > 0:
+                    strat_dict["Win Streak"] += 1
+                    strat_dict["Loss Streak"] = 0
+                elif strat_dict["Current Day PnL"] < 0:
+                    # tie does not change any streak
+                    strat_dict["Win Streak"] = 0
+                    strat_dict["Loss Streak"] += 1
 
-                    new_row = pd.DataFrame(
-                        [
-                            {
-                                "Date": current_date,
-                                "Current Value": strat_dict["Current Value"],
-                                "Highest Value": strat_dict["Highest Value"],
-                                "Max DD": strat_dict["Max DD"],
-                                "Current DD": strat_dict["Current DD"],
-                                "DD Days": strat_dict["DD Days"],
-                                "Day PnL": strat_dict["Current Day PnL"],
-                                "Win Streak": strat_dict["Win Streak"],
-                                "Loss Streak": strat_dict["Loss Streak"],
-                                "Initial Value": initial_value,
-                                "Weekday": current_weekday,
-                            }
-                        ]
-                    )
-                    results[strat] = pd.concat(
-                        [results[strat], new_row], ignore_index=True
-                    )
+                new_row = pd.DataFrame(
+                    [
+                        {
+                            "Date": current_date,
+                            "Current Value": strat_dict["Current Value"],
+                            "Highest Value": strat_dict["Highest Value"],
+                            "Max DD": strat_dict["Max DD"],
+                            "Current DD": strat_dict["Current DD"],
+                            "DD Days": strat_dict["DD Days"],
+                            "Day PnL": strat_dict["Current Day PnL"],
+                            "Win Streak": strat_dict["Win Streak"],
+                            "Loss Streak": strat_dict["Loss Streak"],
+                            "Initial Value": initial_value,
+                            "Weekday": current_weekday,
+                        }
+                    ]
+                )
+                results[strat] = pd.concat([results[strat], new_row], ignore_index=True)
 
+            if warmed_up and not skip_day:
                 calc_metrics(strat_dict, strat, results)
 
-            else:
+            if skip_day:
                 # this is a skip day just increment the DD days if needed
                 if strat_dict["DD Days"] > 0:
                     strat_dict["DD Days"] += 1
@@ -1540,7 +1648,7 @@ def walk_forward_test(
                     port_dict["DD Days"] += 1
 
         # calculate all the stats for the portfolio now that all other strats have traded
-        if portfolio_mode and not skip_day:
+        if portfolio_mode and warmed_up and not skip_day:
             calc_metrics(port_dict, "Portfolio", results)
 
         current_date += dt.timedelta(1)
@@ -1651,6 +1759,14 @@ def options_window(settings) -> None:
                             size=(13, 1),
                             tooltip="Keep the excluded events/weekdays in the analysis of best times.\nIf set, then the exclusions will only apply to the walk forward test.",
                         ),
+                        Checkbox(
+                            "Auto Exclusions",
+                            settings["-AUTO_EXCLUSIONS-"],
+                            key="-AUTO_EXCLUSIONS-",
+                            font=font,
+                            size=(10, 1),
+                            tooltip="Allow Walk-Forward test to determine which events to exclude\nbased on whether the event has -EV from prior lookback period.\nNote: This will require an additional warmup period.",
+                        ),
                     ]
                 ],
                 expand_x=True,
@@ -1679,7 +1795,7 @@ def options_window(settings) -> None:
         ],
     ]
     # window_size = (int(screen_size[0] * 0.4), int(screen_size[1] * 0.48))
-    window_size = (int(660 * dpi_scale), int(580 * dpi_scale))
+    window_size = (int(680 * dpi_scale), int(580 * dpi_scale))
     window = sg.Window(
         "Options",
         layout,
@@ -1715,6 +1831,7 @@ def options_window(settings) -> None:
             settings["-PUT_OR_CALL-"] = values["-PUT_OR_CALL-"]
             settings["-IDV_WEEKDAY-"] = values["-IDV_WEEKDAY-"]
             settings["-KEEP_EXCLUSIONS-"] = values["-KEEP_EXCLUSIONS-"]
+            settings["-AUTO_EXCLUSIONS-"] = values["-AUTO_EXCLUSIONS-"]
             if values["-FILE-"] and values["-FILE-"] != "Loaded":
                 result = import_news_events(values["-FILE-"])
                 if result:
@@ -1737,421 +1854,536 @@ def options_window(settings) -> None:
 def main():
     # try to load news events if csv found
     threading.Thread(target=find_and_import_news_events, daemon=True).start()
-    tab_group_layout = []
-    for tg in ["Put/Call Comb", "Best P/C", "Puts", "Calls"]:
-        tg_layout = []
-        for day in ["All", "Mon", "Tue", "Wed", "Thu", "Fri"]:
-            tab = sg.Tab(
-                day,
-                [
-                    [
-                        sg.Table(
-                            "",
-                            ["Top Times", "Avg", "Source File"],
-                            key=f"-TABLE_{day}_{tg}-",
-                            expand_x=True,
-                            auto_size_columns=True,
-                            background_color="white",
-                            alternating_row_color="lightgrey",
-                            header_text_color="black",
-                            header_background_color="lightblue",
-                        )
-                    ]
-                ],
-                expand_x=True,
-            )
-            tg_layout.append(tab)
-        main_group_tab = sg.Tab(
-            tg,
-            [[sg.TabGroup([tg_layout], expand_x=True)]],
-            expand_x=True,
-        )
-        tab_group_layout.append(main_group_tab)
 
-    chart_tab = sg.Tab(
-        "Charts",
-        [
-            [
-                sg.TabGroup(
+    # load default settings or last used
+    app_settings = {
+        "-THEME-": "Light",
+        "-AVG_PERIOD_1-": "4",
+        "-AVG_PERIOD_2-": "8",
+        "-PERIOD_1_WEIGHT-": "25",
+        "-PERIOD_2_WEIGHT-": "75",
+        "-TOP_X-": "5",
+        "-CALC_TYPE-": "PCR",
+        "-AGG_TYPE-": "Monthly",
+        "-OPEN_FILES-": False,
+        "-BACKTEST-": False,
+        "-START_VALUE-": "100000",
+        "-START_DATE-": "",
+        "-END_DATE-": "",
+        "-EXPORT-": False,
+        "-SCALING-": False,
+        "-MIN_TRANCHES-": "5",
+        "-MAX_TRANCHES-": "5",
+        "-BP_PER-": "6000",
+        "-PORTFOLIO_MODE-": False,
+    }
+    settings_filename = os.path.join(os.path.curdir, "data", "tta_settings.json")
+    if os.path.exists(settings_filename):
+        try:
+            with open(settings_filename, "r") as f:
+                app_settings = json.load(f)
+        except json.JSONDecodeError:
+            # delete bad file
+            results_queue.put(
+                (
+                    "-ERROR-",
+                    "Error loading tta_settings.json\nDeleting corrupt file and\nfalling back to defaults",
+                )
+            )
+            try:
+                os.remove(settings_filename)
+            except:
+                results_queue.put(
+                    (
+                        "-ERROR-",
+                        "Could not delete corrupt tta_settings.json file.\nPlease remove manually from data directory",
+                    )
+                )
+                pass
+    sg.theme(themes[app_settings["-THEME-"]])
+    sg.theme_button_color(button_color)  # override button color
+
+    def get_main_window(values=None, old_window=None):
+        tab_group_layout = []
+        for tg in ["Put/Call Comb", "Best P/C", "Puts", "Calls"]:
+            tg_layout = []
+            for day in ["All", "Mon", "Tue", "Wed", "Thu", "Fri"]:
+                tab = sg.Tab(
+                    day,
                     [
                         [
-                            sg.Tab(
-                                "PnL",
-                                [
-                                    [
-                                        sg.Table(
-                                            "",
-                                            [
-                                                "Strategy",
-                                                "Final Value",
-                                                "Profit",
-                                                "Total Return",
-                                                "CAGR",
-                                                "Max DD",
-                                                "Max DD Days",
-                                                "W Strk",
-                                                "L Strk",
-                                                "High Mo",
-                                                "Low Mo",
-                                                "MAR",
-                                                "Sharpe",
-                                            ],
-                                            key="-PNL_TABLE_CHART-",
-                                            expand_x=True,
-                                            num_rows=4,
-                                            auto_size_columns=True,
-                                            background_color="lightgrey",
-                                            alternating_row_color="white",
-                                            header_text_color="black",
-                                            header_background_color="lightblue",
-                                        )
-                                    ],
-                                    [
-                                        sg.Image(
-                                            key="-PNL_CHART-",
-                                            size=(
-                                                int(screen_size[0] * 0.25),
-                                                int(screen_size[1] * 0.25),
-                                            ),
-                                            expand_x=True,
-                                            expand_y=True,
-                                        )
-                                    ],
-                                ],
-                            ),
-                            sg.Tab(
-                                "PnL by Weekday",
-                                [
-                                    [
-                                        sg.Image(
-                                            key="-WEEKDAY_PNL_CHART-",
-                                            size=(
-                                                int(screen_size[0] * 0.25),
-                                                int(screen_size[1] * 0.25),
-                                            ),
-                                            expand_x=True,
-                                            expand_y=True,
-                                        )
-                                    ],
-                                ],
-                            ),
-                            sg.Tab(
-                                "Monthly PnL",
-                                [
-                                    [
-                                        sg.Image(
-                                            key="-MONTHLY_PNL_CHART-",
-                                            size=(
-                                                int(screen_size[0] * 0.25),
-                                                int(screen_size[1] * 0.25),
-                                            ),
-                                            expand_x=True,
-                                            expand_y=True,
-                                        )
-                                    ],
-                                ],
-                            ),
-                            sg.Tab(
-                                "PnL by News Event",
-                                [
-                                    [
-                                        sg.Image(
-                                            key="-NEWS_PNL_CHART-",
-                                            size=(
-                                                int(screen_size[0] * 0.25),
-                                                int(screen_size[1] * 0.25),
-                                            ),
-                                            expand_x=True,
-                                            expand_y=True,
-                                        )
-                                    ],
-                                ],
-                            ),
-                            sg.Tab(
-                                "Avg PnL per News Event",
-                                [
-                                    [
-                                        sg.Image(
-                                            key="-NEWS_AVG_PNL_CHART-",
-                                            size=(
-                                                int(screen_size[0] * 0.25),
-                                                int(screen_size[1] * 0.25),
-                                            ),
-                                            expand_x=True,
-                                            expand_y=True,
-                                        )
-                                    ],
-                                ],
-                            ),
+                            sg.Table(
+                                (
+                                    old_window.key_dict[f"-TABLE_{day}_{tg}-"].Values
+                                    if old_window
+                                    else ""
+                                ),
+                                ["Top Times", "Avg", "Source File"],
+                                key=f"-TABLE_{day}_{tg}-",
+                                expand_x=True,
+                                auto_size_columns=True,
+                                # background_color="white",
+                                alternating_row_color="darkgrey",
+                                # header_text_color="black",
+                                # header_background_color="lightblue",
+                            )
                         ]
                     ],
                     expand_x=True,
-                    expand_y=True,
                 )
-            ]
-        ],
-    )
-    tab_group_layout.append(chart_tab)
+                tg_layout.append(tab)
+            main_group_tab = sg.Tab(
+                tg,
+                [[sg.TabGroup([tg_layout], expand_x=True)]],
+                expand_x=True,
+            )
+            tab_group_layout.append(main_group_tab)
 
-    layout = [
-        [
-            sg.Button("Analyze", pad=(5, 10), bind_return_key=True),
-            sg.Text("  "),
-            sg.pin(
-                sg.ProgressBar(
-                    100,
-                    orientation="h",
-                    size=(50, 30),
-                    key="-PROGRESS-",
-                    expand_x=True,
-                    visible=False,
+        chart_tab = sg.Tab(
+            "Charts",
+            [
+                [
+                    sg.TabGroup(
+                        [
+                            [
+                                sg.Tab(
+                                    "PnL",
+                                    [
+                                        [
+                                            sg.Table(
+                                                (
+                                                    old_window.key_dict[
+                                                        "-PNL_TABLE_CHART-"
+                                                    ].Values
+                                                    if old_window
+                                                    else ""
+                                                ),
+                                                [
+                                                    "Strategy",
+                                                    "Final Value",
+                                                    "Profit",
+                                                    "Total Return",
+                                                    "CAGR",
+                                                    "Max DD",
+                                                    "Max DD Days",
+                                                    "W Strk",
+                                                    "L Strk",
+                                                    "High Month",
+                                                    "Low Month",
+                                                    "MAR",
+                                                    "Sharpe",
+                                                ],
+                                                key="-PNL_TABLE_CHART-",
+                                                expand_x=True,
+                                                num_rows=4,
+                                                auto_size_columns=True,
+                                                # background_color="lightgrey",
+                                                alternating_row_color="darkgrey",
+                                                # header_text_color="black",
+                                                # header_background_color="lightblue",
+                                            )
+                                        ],
+                                        [
+                                            sg.Image(
+                                                key="-PNL_CHART-",
+                                                size=(
+                                                    int(screen_size[0] * 0.25),
+                                                    int(screen_size[1] * 0.25),
+                                                ),
+                                                expand_x=True,
+                                                expand_y=True,
+                                            )
+                                        ],
+                                    ],
+                                ),
+                                sg.Tab(
+                                    "PnL by Weekday",
+                                    [
+                                        [
+                                            sg.Image(
+                                                key="-WEEKDAY_PNL_CHART-",
+                                                size=(
+                                                    int(screen_size[0] * 0.25),
+                                                    int(screen_size[1] * 0.25),
+                                                ),
+                                                expand_x=True,
+                                                expand_y=True,
+                                            )
+                                        ],
+                                    ],
+                                ),
+                                sg.Tab(
+                                    "Monthly PnL",
+                                    [
+                                        [
+                                            sg.Image(
+                                                key="-MONTHLY_PNL_CHART-",
+                                                size=(
+                                                    int(screen_size[0] * 0.25),
+                                                    int(screen_size[1] * 0.25),
+                                                ),
+                                                expand_x=True,
+                                                expand_y=True,
+                                            )
+                                        ],
+                                    ],
+                                ),
+                                sg.Tab(
+                                    "PnL by News Event",
+                                    [
+                                        [
+                                            sg.Image(
+                                                key="-NEWS_PNL_CHART-",
+                                                size=(
+                                                    int(screen_size[0] * 0.25),
+                                                    int(screen_size[1] * 0.25),
+                                                ),
+                                                expand_x=True,
+                                                expand_y=True,
+                                            )
+                                        ],
+                                    ],
+                                ),
+                                sg.Tab(
+                                    "Avg PnL per News Event",
+                                    [
+                                        [
+                                            sg.Image(
+                                                key="-NEWS_AVG_PNL_CHART-",
+                                                size=(
+                                                    int(screen_size[0] * 0.25),
+                                                    int(screen_size[1] * 0.25),
+                                                ),
+                                                expand_x=True,
+                                                expand_y=True,
+                                            )
+                                        ],
+                                    ],
+                                ),
+                            ]
+                        ],
+                        expand_x=True,
+                        expand_y=True,
+                    )
+                ]
+            ],
+        )
+        tab_group_layout.append(chart_tab)
+
+        layout = [
+            [
+                sg.Button("Analyze", pad=(5, 10), bind_return_key=True),
+                sg.Text("  "),
+                sg.pin(
+                    sg.ProgressBar(
+                        100,
+                        orientation="h",
+                        size=(50, 30),
+                        key="-PROGRESS-",
+                        expand_x=True,
+                        visible=False,
+                    ),
                 ),
-            ),
-            sg.pin(sg.Button("Cancel", pad=(20, 0), visible=False)),
-            sg.Push(),
-            sg.Button("Options"),
-            sg.Text(__version__),
-        ],
-        [sg.Text("Select trade log CSV file:")],
-        [
-            sg.Input(
-                key="-FILE-",
-                expand_x=True,
-            ),
-            sg.Button("Browse"),
-        ],
-        [
-            Checkbox(
-                "Portfolio Mode",
-                False,
-                key="-PORTFOLIO_MODE-",
-                size=(12, 1),
-                enable_events=True,
-            ),
-            sg.pin(
+                sg.pin(sg.Button("Cancel", pad=(20, 0), visible=False)),
+                sg.Push(),
+                sg.Button("Options"),
                 sg.Combo(
-                    [],
-                    key="-STRATEGY_SELECT-",
-                    readonly=True,
-                    visible=False,
+                    list(themes),
+                    default_value=app_settings["-THEME-"],
+                    key="-THEME-",
                     enable_events=True,
-                    size=(50, 1),
+                    readonly=True,
+                ),
+                sg.Text(__version__),
+            ],
+            [sg.Text("Select trade log CSV file:")],
+            [
+                sg.Input(
+                    key="-FILE-",
+                    expand_x=True,
+                ),
+                sg.Button("Browse"),
+            ],
+            [
+                Checkbox(
+                    "Portfolio Mode",
+                    app_settings["-PORTFOLIO_MODE-"],
+                    key="-PORTFOLIO_MODE-",
+                    size=(12, 1),
+                    enable_events=True,
+                ),
+                sg.pin(
+                    sg.Combo(
+                        [],
+                        key="-STRATEGY_SELECT-",
+                        readonly=True,
+                        visible=False,
+                        enable_events=True,
+                        size=(50, 1),
+                    )
+                ),
+            ],
+            [
+                sg.Frame(
+                    "",
+                    [
+                        [
+                            sg.Text(
+                                "Trailing Avg 1:",
+                                tooltip="Number of months for first averaging period.\nNote: should be the shorter period",
+                            ),
+                            sg.Input(
+                                app_settings["-AVG_PERIOD_1-"],
+                                key="-AVG_PERIOD_1-",
+                                size=(3, 1),
+                                justification="c",
+                                tooltip="Number of months for first averaging period.\nNote: should be the shorter period",
+                            ),
+                            sg.Text("Months "),
+                            sg.Text(
+                                "Weight:",
+                                tooltip="Weight in % for first avg period\nNote: Set to 100 for this and 0 for 2nd if only using 1 period",
+                            ),
+                            sg.Input(
+                                app_settings["-PERIOD_1_WEIGHT-"],
+                                key="-PERIOD_1_WEIGHT-",
+                                size=(3, 1),
+                                justification="c",
+                                tooltip="Weight in % for first avg period\nNote: Set to 100 for this and 0 for 2nd if only using 1 period",
+                            ),
+                            sg.Text("   "),
+                            sg.Text(
+                                "Trailing Avg 2:",
+                                tooltip="Number of months for second averaging period.\nNote: should be the longer period or same as 1",
+                            ),
+                            sg.Input(
+                                app_settings["-AVG_PERIOD_2-"],
+                                key="-AVG_PERIOD_2-",
+                                size=(3, 1),
+                                justification="c",
+                                tooltip="Number of months for second averaging period.\nNote: should be the longer period or same as 1",
+                            ),
+                            sg.Text("Months "),
+                            sg.Text(
+                                "Weight:",
+                                tooltip="Weight in % for second avg period\nNote: Set to 0 to only use the 1st period",
+                            ),
+                            sg.Input(
+                                app_settings["-PERIOD_2_WEIGHT-"],
+                                key="-PERIOD_2_WEIGHT-",
+                                size=(3, 1),
+                                justification="c",
+                                tooltip="Weight in % for second avg period\nNote: Set to 0 to only use the 1st period",
+                            ),
+                        ],
+                        [
+                            sg.Text(
+                                "Select Top",
+                                pad=(5, 5),
+                                tooltip="Highlight the top n times for each month in the heatmap.\nWill also display the top n times below",
+                            ),
+                            sg.Input(
+                                app_settings["-TOP_X-"],
+                                key="-TOP_X-",
+                                size=(2, 1),
+                                pad=(0, 0),
+                                justification="c",
+                                tooltip="Highlight the top n times for each month in the heatmap.\nWill also display the top n times below",
+                            ),
+                            sg.Text("Time Tranches", pad=(5, 0)),
+                            sg.Text("   Averaging Mode"),
+                            sg.Combo(
+                                ["PCR", "PnL"],
+                                app_settings["-CALC_TYPE-"],
+                                key="-CALC_TYPE-",
+                                readonly=True,
+                            ),
+                            sg.Text(
+                                "   Aggregation Period",
+                                tooltip="Aggregate the results into monthly averages or weekly\nIf doing a walkforward test the top times will be updated at this frequency.",
+                            ),
+                            sg.Combo(
+                                ["Monthly", "Weekly"],
+                                app_settings["-AGG_TYPE-"],
+                                key="-AGG_TYPE-",
+                                tooltip="Aggregate the results into monthly averages or weekly\nIf doing a walkforward test the top times will be updated at this frequency.",
+                                readonly=True,
+                            ),
+                            sg.Push(),
+                            Checkbox(
+                                "Open Excel files after creation",
+                                app_settings["-OPEN_FILES-"],
+                                key="-OPEN_FILES-",
+                                size=(20, 1),
+                            ),
+                        ],
+                    ],
+                    expand_x=True,
                 )
-            ),
-        ],
-        [
-            sg.Frame(
-                "",
-                [
+            ],
+            [
+                sg.Frame(
+                    "",
                     [
-                        sg.Text(
-                            "Trailing Avg 1:",
-                            tooltip="Number of months for first averaging period.\nNote: should be the shorter period",
-                        ),
-                        sg.Input(
-                            "4",
-                            key="-AVG_PERIOD_1-",
-                            size=(3, 1),
-                            justification="c",
-                            tooltip="Number of months for first averaging period.\nNote: should be the shorter period",
-                        ),
-                        sg.Text("Months "),
-                        sg.Text(
-                            "Weight:",
-                            tooltip="Weight in % for first avg period\nNote: Set to 100 for this and 0 for 2nd if only using 1 period",
-                        ),
-                        sg.Input(
-                            "25",
-                            key="-PERIOD_1_WEIGHT-",
-                            size=(3, 1),
-                            justification="c",
-                            tooltip="Weight in % for first avg period\nNote: Set to 100 for this and 0 for 2nd if only using 1 period",
-                        ),
-                        sg.Text("   "),
-                        sg.Text(
-                            "Trailing Avg 2:",
-                            tooltip="Number of months for second averaging period.\nNote: should be the longer period or same as 1",
-                        ),
-                        sg.Input(
-                            "8",
-                            key="-AVG_PERIOD_2-",
-                            size=(3, 1),
-                            justification="c",
-                            tooltip="Number of months for second averaging period.\nNote: should be the longer period or same as 1",
-                        ),
-                        sg.Text("Months "),
-                        sg.Text(
-                            "Weight:",
-                            tooltip="Weight in % for second avg period\nNote: Set to 0 to only use the 1st period",
-                        ),
-                        sg.Input(
-                            "75",
-                            key="-PERIOD_2_WEIGHT-",
-                            size=(3, 1),
-                            justification="c",
-                            tooltip="Weight in % for second avg period\nNote: Set to 0 to only use the 1st period",
-                        ),
+                        [
+                            Checkbox(
+                                "Perform walk-forward backtest",
+                                app_settings["-BACKTEST-"],
+                                key="-BACKTEST-",
+                                size=(19, 1),
+                                tooltip="Out of sample/walk forward test.  Optimize times for prior lookback period\nand test outcome in the following month (out of sample).\nWalk forward to the next month and re-optomize times.",
+                            ),
+                            sg.Text(
+                                "Starting Value",
+                                tooltip="Porfolio Value to start from.  If using scaling the BP per contract\nwill be divided by this amount to determine the number of contracts to trade",
+                            ),
+                            sg.Input(
+                                app_settings["-START_VALUE-"],
+                                size=(10, 1),
+                                key="-START_VALUE-",
+                                justification="r",
+                                tooltip="Porfolio Value to start from.  If using scaling the BP per contract\nwill be divided by this amount to determine the number of contracts to trade",
+                            ),
+                            sg.Text(
+                                "   Start Date",
+                                tooltip="Date to start test from. Leave blank to automatically\nselect the earliest available start date from the available data",
+                            ),
+                            sg.Input(
+                                app_settings["-START_DATE-"],
+                                key="-START_DATE-",
+                                size=(12, 1),
+                                justification="c",
+                                tooltip="Date to start test from. Leave blank to automatically\nselect the earliest available start date from the available data",
+                            ),
+                            sg.Text(
+                                " End Date",
+                                tooltip="Date to end test. Leave blank to automatically\nselect the latest available end date from the available data",
+                            ),
+                            sg.Input(
+                                app_settings["-END_DATE-"],
+                                key="-END_DATE-",
+                                size=(12, 1),
+                                justification="c",
+                                tooltip="Date to end test. Leave blank to automatically\nselect the latest available end date from the available data",
+                            ),
+                            sg.Push(),
+                            Checkbox(
+                                "Export Trades to CSV",
+                                app_settings["-EXPORT-"],
+                                key="-EXPORT-",
+                                size=(16, 1),
+                            ),
+                        ],
+                        [
+                            Checkbox(
+                                "Use Scaling",
+                                app_settings["-SCALING-"],
+                                key="-SCALING-",
+                                size=(10, 1),
+                                tooltip="Uses scaling logic to determine the number of contracts\nto trade each day of the backtest based on current portfolio value\nand the BP per contract.",
+                            ),
+                            sg.Text(
+                                "Min Tranches",
+                                tooltip="When using scaling, this the minimum number of tranche times",
+                            ),
+                            sg.Input(
+                                app_settings["-MIN_TRANCHES-"],
+                                key="-MIN_TRANCHES-",
+                                size=(3, 1),
+                                justification="c",
+                                tooltip="When using scaling, this the minimum number of tranche times",
+                            ),
+                            sg.Text(
+                                "   Max Tranches",
+                                tooltip="When using scaling, this the maximum number of tranche times.\nAdditonal contracts over this amount will be distributed among the available tranche times.",
+                            ),
+                            sg.Input(
+                                app_settings["-MAX_TRANCHES-"],
+                                key="-MAX_TRANCHES-",
+                                size=(3, 1),
+                                justification="c",
+                                tooltip="When using scaling, this the maximum number of tranche times.\nAdditonal contracts over this amount will be distributed among the available tranche times.",
+                            ),
+                            sg.Text(
+                                "   BP Per Contract",
+                                tooltip="Amount of buying power to use for each contract.  This is only used to determine\nthe total number of contracts to trade each day when using scaling.",
+                            ),
+                            sg.Input(
+                                app_settings["-BP_PER-"],
+                                key="-BP_PER-",
+                                size=(6, 1),
+                                justification="r",
+                                tooltip="Amount of buying power to use for each contract.  This is only used to determine\nthe total number of contracts to trade each day when using scaling.",
+                            ),
+                        ],
                     ],
-                    [
-                        sg.Text(
-                            "Select Top",
-                            pad=(5, 5),
-                            tooltip="Highlight the top n times for each month in the heatmap.\nWill also display the top n times below",
-                        ),
-                        sg.Input(
-                            "5",
-                            key="-TOP_X-",
-                            size=(2, 1),
-                            pad=(0, 0),
-                            justification="c",
-                            tooltip="Highlight the top n times for each month in the heatmap.\nWill also display the top n times below",
-                        ),
-                        sg.Text("Time Tranches", pad=(5, 0)),
-                        sg.Text("   Averaging Mode"),
-                        sg.Combo(
-                            ["PCR", "PnL"],
-                            "PCR",
-                            key="-CALC_TYPE-",
-                            readonly=True,
-                        ),
-                        sg.Text(
-                            "   Aggregation Period",
-                            tooltip="Aggregate the results into monthly averages or weekly\nIf doing a walkforward test the top times will be updated at this frequency.",
-                        ),
-                        sg.Combo(
-                            ["Monthly", "Weekly"],
-                            "Monthly",
-                            key="-AGG_TYPE-",
-                            tooltip="Aggregate the results into monthly averages or weekly\nIf doing a walkforward test the top times will be updated at this frequency.",
-                            readonly=True,
-                        ),
-                        sg.Push(),
-                        Checkbox(
-                            "Open Excel files after creation",
-                            False,
-                            key="-OPEN_FILES-",
-                            size=(20, 1),
-                        ),
-                    ],
-                ],
-                expand_x=True,
-            )
-        ],
-        [
-            sg.Frame(
-                "",
-                [
-                    [
-                        Checkbox(
-                            "Perform walk-forward backtest",
-                            False,
-                            key="-BACKTEST-",
-                            size=(19, 1),
-                            tooltip="Out of sample/walk forward test.  Optimize times for prior lookback period\nand test outcome in the following month (out of sample).\nWalk forward to the next month and re-optomize times.",
-                        ),
-                        sg.Text(
-                            "Starting Value",
-                            tooltip="Porfolio Value to start from.  If using scaling the BP per contract\nwill be divided by this amount to determine the number of contracts to trade",
-                        ),
-                        sg.Input(
-                            f"100000",
-                            size=(10, 1),
-                            key="-START_VALUE-",
-                            justification="r",
-                            tooltip="Porfolio Value to start from.  If using scaling the BP per contract\nwill be divided by this amount to determine the number of contracts to trade",
-                        ),
-                        sg.Text(
-                            "   Start Date",
-                            tooltip="Date to start test from. Leave blank to automatically\nselect the earliest available start date from the available data",
-                        ),
-                        sg.Input(
-                            "",
-                            key="-START_DATE-",
-                            size=(12, 1),
-                            justification="c",
-                            tooltip="Date to start test from. Leave blank to automatically\nselect the earliest available start date from the available data",
-                        ),
-                        sg.Text(
-                            " End Date",
-                            tooltip="Date to end test. Leave blank to automatically\nselect the latest available end date from the available data",
-                        ),
-                        sg.Input(
-                            "",
-                            key="-END_DATE-",
-                            size=(12, 1),
-                            justification="c",
-                            tooltip="Date to end test. Leave blank to automatically\nselect the latest available end date from the available data",
-                        ),
-                        sg.Push(),
-                        Checkbox(
-                            "Export Trades to CSV",
-                            False,
-                            key="-EXPORT-",
-                            size=(16, 1),
-                        ),
-                    ],
-                    [
-                        Checkbox(
-                            "Use Scaling",
-                            False,
-                            key="-SCALING-",
-                            size=(10, 1),
-                            tooltip="Uses scaling logic to determine the number of contracts\nto trade each day of the backtest based on current portfolio value\nand the BP per contract.",
-                        ),
-                        sg.Text(
-                            "Min Tranches",
-                            tooltip="When using scaling, this the minimum number of tranche times",
-                        ),
-                        sg.Input(
-                            "5",
-                            key="-MIN_TRANCHES-",
-                            size=(3, 1),
-                            justification="c",
-                            tooltip="When using scaling, this the minimum number of tranche times",
-                        ),
-                        sg.Text(
-                            "   Max Tranches",
-                            tooltip="When using scaling, this the maximum number of tranche times.\nAdditonal contracts over this amount will be distributed among the available tranche times.",
-                        ),
-                        sg.Input(
-                            "5",
-                            key="-MAX_TRANCHES-",
-                            size=(3, 1),
-                            justification="c",
-                            tooltip="When using scaling, this the maximum number of tranche times.\nAdditonal contracts over this amount will be distributed among the available tranche times.",
-                        ),
-                        sg.Text(
-                            "   BP Per Contract",
-                            tooltip="Amount of buying power to use for each contract.  This is only used to determine\nthe total number of contracts to trade each day when using scaling.",
-                        ),
-                        sg.Input(
-                            "6000",
-                            key="-BP_PER-",
-                            size=(6, 1),
-                            justification="r",
-                            tooltip="Amount of buying power to use for each contract.  This is only used to determine\nthe total number of contracts to trade each day when using scaling.",
-                        ),
-                    ],
-                ],
-                expand_x=True,
-            )
-        ],
-        [
-            sg.TabGroup(
-                [tab_group_layout],
-                expand_x=True,
-                key="-TAB_GROUP-",
-            )
-        ],
-    ]
-    window_size = (int(screen_size[0] * 0.6), int(screen_size[1] * 0.8))
-    window = sg.Window(
-        "Tranche Time Analyzer", layout, size=window_size, resizable=True, finalize=True
-    )
-    window["-PROGRESS-"].Widget.config(mode="indeterminate")
-    Checkbox.initial(window)
+                    expand_x=True,
+                )
+            ],
+            [
+                sg.TabGroup(
+                    [tab_group_layout],
+                    expand_x=True,
+                    key="-TAB_GROUP-",
+                )
+            ],
+        ]
+        if old_window:
+            # create new window with same size and location
+            window_size = old_window.size
+            window_position = old_window.current_location(True)
+        else:
+            window_size = (int(screen_size[0] * 0.7), int(screen_size[1] * 0.8))
+            window_position = (None, None)
+        window = sg.Window(
+            "Tranche Time Analyzer",
+            layout,
+            size=window_size,
+            resizable=True,
+            finalize=True,
+            location=window_position,
+        )
+        window["-PROGRESS-"].Widget.config(mode="indeterminate")
+        Checkbox.initial(window)
+
+        # reselect previously selected tabs
+        if old_window:
+            # get the currently selected tab
+            tab_group = old_window["-TAB_GROUP-"]
+            selected = tab_group.get()
+            selected_id = [
+                "Put/Call Comb",
+                "Best P/C",
+                "Puts",
+                "Calls",
+                "Charts",
+            ].index(selected)
+            window["-TAB_GROUP-"].Widget.select(selected_id)
+
+        # If we have previous values, update the window
+        if values:
+            for key in values:
+                if key in window.AllKeysDict:
+                    element = window[key]
+                    if isinstance(element, sg.Table):
+                        # For Table elements, we need to update the values differently
+                        data = old_window.key_dict[key].Values
+                        element.update(values=data, num_rows=len(data))
+
+                    elif isinstance(element, sg.Checkbox):
+                        # For Checkbox elements, we need to use the 'value' parameter
+                        element.update(value=values[key])
+                    elif not isinstance(element, sg.TabGroup):
+                        # For most other elements, we can use the 'value' parameter
+                        try:
+                            element.update(value=values[key])
+                        except:
+                            pass
+        return window
+
+    window = get_main_window()
     error = False
-    chart_filenames = {}
+    chart_images = {}
     strategy_settings = {}
     test_running = False
     while True:
@@ -2238,6 +2470,8 @@ def main():
             ).start()
             test_running = True
 
+            save_settings(app_settings, settings_filename, values)
+
         elif event == "Browse":
             files = sg.popup_get_file(
                 "",
@@ -2304,18 +2538,34 @@ def main():
                         window[key].update(format_float(value))
 
         elif event == "__TIMEOUT__":
-            if chart_filenames:
+            if chart_images:
                 # Resize the image and update the element
                 window_w, window_h = window.size
-                image_width_max = int(window_w * 0.95)
+                image_width_max = int(window_w * 0.90)
                 image_height_max = int(window_h * 0.5)
                 image_width = min(
                     image_width_max, int(image_height_max / image_aspect_ratio)
                 )
                 image_size = (image_width, int(image_width * image_aspect_ratio))
-                for chart, filename in chart_filenames.items():
-                    resized_image = resize_image(filename, image_size)
+                for chart, image_b64 in chart_images.items():
+                    # we only need to pass the height
+                    resized_image = resize_base64_image(image_b64, image_size[1])
                     window[chart].update(data=resized_image)
+
+        elif event == "-THEME-":
+            new_theme = themes[values["-THEME-"]]
+            sg.theme(new_theme)
+            sg.theme_button_color(button_color)  # override button color
+            save_settings(app_settings, settings_filename, values)
+            # Recreate the window with the new theme
+            Checkbox.clear_elements()
+            new_window = get_main_window(values.copy(), window)
+
+            # Close the current window
+            window.close()
+
+            window = new_window
+            continue
 
         # Update strategy settings when values change but not while analysis is running
         if (
@@ -2374,46 +2624,45 @@ def main():
                     test_running = False
 
             elif result_key == "-BACKTEST_END-":
-                charts = [
-                    "-PNL_CHART-",
-                    "-WEEKDAY_PNL_CHART-",
-                    "-MONTHLY_PNL_CHART-",
-                    "-NEWS_PNL_CHART-",
-                    "-NEWS_AVG_PNL_CHART-",
-                ]
-                # setup chart/plot filenames
-                path = os.path.join(
-                    os.path.dirname(files_list[0]), "data", "chart_images"
-                )
-                os.makedirs(path, exist_ok=True)
-                ext = ".png"
-                for chart in charts:
-                    base_filename = f"Walkforward Test{chart}{str(uuid.uuid4())[:8]}"
-                    chart_filenames[chart] = get_next_filename(path, base_filename, ext)
-
-                table_data = get_pnl_plot(results, chart_filenames["-PNL_CHART-"])
+                table_data, img_data = get_pnl_plot(results)
+                chart_images["-PNL_CHART-"] = img_data
                 window["-PNL_TABLE_CHART-"].update(
                     values=table_data, num_rows=len(table_data)
                 )
 
-                get_weekday_pnl_chart(results, chart_filenames["-WEEKDAY_PNL_CHART-"])
-                get_monthly_pnl_chart(results, chart_filenames["-MONTHLY_PNL_CHART-"])
-                get_news_event_pnl_chart(results, chart_filenames["-NEWS_PNL_CHART-"])
-                get_news_event_pnl_chart(
-                    results, chart_filenames["-NEWS_AVG_PNL_CHART-"], False
+                chart_images["-WEEKDAY_PNL_CHART-"] = get_weekday_pnl_chart(results)
+                chart_images["-MONTHLY_PNL_CHART-"] = get_monthly_pnl_chart(results)
+                chart_images["-NEWS_PNL_CHART-"] = get_news_event_pnl_chart(results)
+                chart_images["-NEWS_AVG_PNL_CHART-"] = get_news_event_pnl_chart(
+                    results, False
                 )
 
-                for chart, filename in chart_filenames.items():
-                    chart_image = resize_image(
-                        filename,
-                        (int(window.size[0] * 0.5), int(window.size[1] * 0.25)),
+                # resize the images to fit in the window
+                for chart, image_data in chart_images.items():
+                    chart_image = resize_base64_image(
+                        image_data,
+                        int(window.size[1] * 0.25),
                     )
                     window[chart].update(data=chart_image)
+
                 window["-TAB_GROUP-"].Widget.select(4)
                 window["-PROGRESS-"].update(visible=False)
                 window["Cancel"].update(visible=False)
                 window["Analyze"].update("Analyze", disabled=False)
                 test_running = False
+                # recreate window to have table columns auto adjust
+                new_theme = themes[values["-THEME-"]]
+                sg.theme(new_theme)
+
+                # Recreate the window with the new theme
+                Checkbox.clear_elements()
+                new_window = get_main_window(values.copy(), window)
+
+                # Close the current window
+                window.close()
+
+                window = new_window
+                continue
 
             elif result_key == "-BACKTEST_CANCELED-":
                 window["-PROGRESS-"].update(visible=False)
@@ -2422,6 +2671,9 @@ def main():
                 test_running = False
 
             elif result_key == "-IMPORT_NEWS-":
+                sg.popup_no_border(results)
+
+            elif result_key == "-ERROR-":
                 sg.popup_no_border(results)
         # move the progress bar
         if window["Analyze"].Disabled:
