@@ -2331,7 +2331,7 @@ def main():
         if old_window:
             # create new window with same size and location
             window_size = old_window.size
-            window_position = old_window.current_location(True)
+            window_position = old_window.current_location(False)
         else:
             window_size = (int(screen_size[0] * 0.7), int(screen_size[1] * 0.8))
             window_position = (None, None)
