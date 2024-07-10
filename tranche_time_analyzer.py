@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.1"
+__version__ = "v.1.9.2"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -2653,6 +2653,7 @@ def main():
                 # recreate window to have table columns auto adjust
                 new_theme = themes[values["-THEME-"]]
                 sg.theme(new_theme)
+                sg.theme_button_color(button_color)  # override button color
 
                 # Recreate the window with the new theme
                 Checkbox.clear_elements()
