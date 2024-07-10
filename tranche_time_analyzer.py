@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.0"
+__version__ = "v.1.9.1"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -2117,7 +2117,7 @@ def main():
                         [],
                         key="-STRATEGY_SELECT-",
                         readonly=True,
-                        visible=False,
+                        visible=app_settings["-PORTFOLIO_MODE-"],
                         enable_events=True,
                         size=(50, 1),
                     )
