@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.3"
+__version__ = "v.1.9.4"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1585,7 +1585,7 @@ def walk_forward_test(
                         )
                         strat_dict["Current Value"] += pnl
                         strat_dict["Current Day PnL"] += pnl
-            
+
             if current_weekday in day_list:
                 # make sure its not the weekend
                 num_tranches = strat_dict["Num Tranches"]
@@ -1796,7 +1796,7 @@ def options_window(settings) -> None:
         ],
     ]
     # window_size = (int(screen_size[0] * 0.4), int(screen_size[1] * 0.48))
-    window_size = (int(680 * dpi_scale), int(580 * dpi_scale))
+    window_size = (int(700 * dpi_scale), int(580 * dpi_scale))
     window = sg.Window(
         "Options",
         layout,
