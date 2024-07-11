@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.5"
+__version__ = "v.1.9.6"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -274,7 +274,7 @@ def analyze(
 
     # get list of news event dates to skip.
     news_date_exclusions = []
-    if not settings["-KEEP_EXCLUSIONS-"]:
+    if settings["-APPLY_EXCLUSIONS-"] != "Walk Forward Test":
         for release, date_list in news_events.items():
             if release in settings["-NEWS_EXCLUSIONS-"]:
                 news_date_exclusions += date_list
@@ -352,7 +352,7 @@ def create_excel_file(
     long_avg_period = settings["-AVG_PERIOD_2-"]
     long_weight = settings["-PERIOD_2_WEIGHT-"] / 100
     top_x = settings["-TOP_X-"]
-    if settings["-KEEP_EXCLUSIONS-"]:
+    if settings["-APPLY_EXCLUSIONS-"] != "Walk Forward Test":
         weekday_exclusions = []
     else:
         weekday_exclusions = settings["-WEEKDAY_EXCLUSIONS-"]
@@ -1205,11 +1205,13 @@ def update_strategy_settings(values, settings):
         "-NEWS_EXCLUSIONS-",
         "-PUT_OR_CALL-",
         "-IDV_WEEKDAY-",
-        "-KEEP_EXCLUSIONS-",
         "-AUTO_EXCLUSIONS-",
     ]:
         if option not in settings:
             settings[option] = [] if option.endswith("EXCLUSIONS-") else False
+
+    if "-APPLY_EXCLUSIONS-" not in settings:
+        settings["-APPLY_EXCLUSIONS-"] = "Both"
 
 
 def validate_strategy_settings(strategy_settings):
@@ -1425,12 +1427,15 @@ def walk_forward_test(
             # reset daily pnl for individual strategy
             strat_dict["Current Day PnL"] = 0
 
-            day_exlusions = [_day[:3] for _day in settings["-WEEKDAY_EXCLUSIONS-"]]
-            # get list of news event dates to skip.
+            day_exlusions = []
             news_date_exclusions = []
-            for release, date_list in news_events.items():
-                if release in settings["-NEWS_EXCLUSIONS-"]:
-                    news_date_exclusions += date_list
+            if settings["-APPLY_EXCLUSIONS-"] != "Analysis":
+                # we are applying exclusions to either the WF test or both the WF and Analysis
+                day_exlusions = [_day[:3] for _day in settings["-WEEKDAY_EXCLUSIONS-"]]
+                # get list of news event dates to skip.
+                for release, date_list in news_events.items():
+                    if release in settings["-NEWS_EXCLUSIONS-"]:
+                        news_date_exclusions += date_list
 
             skip_day = False
             if warmed_up and using_auto_exclusions:
@@ -1755,14 +1760,6 @@ def options_window(settings) -> None:
                             tooltip="Compare selecting the best times for each specific weekday to trade for that weekday",
                         ),
                         Checkbox(
-                            "Keep Exclusions in Analysis",
-                            settings["-KEEP_EXCLUSIONS-"],
-                            key="-KEEP_EXCLUSIONS-",
-                            font=font,
-                            size=(13, 1),
-                            tooltip="Keep the excluded events/weekdays in the analysis of best times.\nIf set, then the exclusions will only apply to the walk forward test.",
-                        ),
-                        Checkbox(
                             "Auto Exclusions",
                             settings["-AUTO_EXCLUSIONS-"],
                             key="-AUTO_EXCLUSIONS-",
@@ -1770,7 +1767,19 @@ def options_window(settings) -> None:
                             size=(10, 1),
                             tooltip="Allow Walk-Forward test to determine which events to exclude\nbased on whether the event has -EV from prior lookback period.\nNote: This will require an additional warmup period.",
                         ),
-                    ]
+                    ],
+                    [
+                        sg.Text("Apply Exclusions to:", pad=((5,1), 5)),
+                        sg.Combo(
+                            ["Both", "Analysis", "Walk Forward Test"],
+                            settings["-APPLY_EXCLUSIONS-"],
+                            key="-APPLY_EXCLUSIONS-",
+                            font=font,
+                            size=(13, 1),
+                            tooltip="Apply the excluded events/weekdays to the analysis\nof best times, or just the walk-forward test, or both.",
+                            pad=(0, 5),
+                        ),
+                    ],
                 ],
                 expand_x=True,
             ),
@@ -1798,7 +1807,7 @@ def options_window(settings) -> None:
         ],
     ]
     # window_size = (int(screen_size[0] * 0.4), int(screen_size[1] * 0.48))
-    window_size = (int(700 * dpi_scale), int(580 * dpi_scale))
+    window_size = (int(650 * dpi_scale), int(580 * dpi_scale))
     window = sg.Window(
         "Options",
         layout,
@@ -1807,7 +1816,6 @@ def options_window(settings) -> None:
         finalize=True,
         modal=True,
         resizable=True,
-        grab_anywhere=True,
     )
     Checkbox.initial(window)
     while True:
@@ -1833,7 +1841,7 @@ def options_window(settings) -> None:
             ]
             settings["-PUT_OR_CALL-"] = values["-PUT_OR_CALL-"]
             settings["-IDV_WEEKDAY-"] = values["-IDV_WEEKDAY-"]
-            settings["-KEEP_EXCLUSIONS-"] = values["-KEEP_EXCLUSIONS-"]
+            settings["-APPLY_EXCLUSIONS-"] = values["-APPLY_EXCLUSIONS-"]
             settings["-AUTO_EXCLUSIONS-"] = values["-AUTO_EXCLUSIONS-"]
             if values["-FILE-"] and values["-FILE-"] != "Loaded":
                 result = import_news_events(values["-FILE-"])
