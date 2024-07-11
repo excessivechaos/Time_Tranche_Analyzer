@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.4"
+__version__ = "v.1.9.5"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1541,9 +1541,11 @@ def walk_forward_test(
                 if portfolio_mode:
                     # filter out other sources since all sources are included
                     source = os.path.splitext(strat)[0]
-                    best_times_df = best_times_df[
-                        best_times_df["Source"].str.endswith(source)
-                    ].sort_values("Values", ascending=False).head(num_tranches)
+                    best_times_df = (
+                        best_times_df[best_times_df["Source"].str.endswith(source)]
+                        .sort_values("Values", ascending=False)
+                        .head(num_tranches)
+                    )
 
                 best_times = best_times_df["Top Times"].to_list()
                 for time in best_times:
