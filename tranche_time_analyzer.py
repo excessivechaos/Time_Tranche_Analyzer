@@ -1775,9 +1775,9 @@ def options_window(settings) -> None:
                             settings["-APPLY_EXCLUSIONS-"],
                             key="-APPLY_EXCLUSIONS-",
                             font=font,
-                            size=(13, 1),
                             tooltip="Apply the excluded events/weekdays to the analysis\nof best times, or just the walk-forward test, or both.",
                             pad=(0, 5),
+                            readonly=True,
                         ),
                     ],
                 ],
@@ -2411,7 +2411,10 @@ def main():
                 selected_strategy = values["-STRATEGY_SELECT-"]
             else:
                 selected_strategy = "-SINGLE_MODE-"
-            options_window(strategy_settings[selected_strategy])
+            if selected_strategy:
+                options_window(strategy_settings[selected_strategy])
+            else:
+                sg.popup_no_border("Please select a strategy first")
 
         elif event == "Analyze":
             files_list = values["-FILE-"].split(";")
