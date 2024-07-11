@@ -21,6 +21,7 @@ from dateutil import parser
 from dateutil.relativedelta import relativedelta
 from openpyxl.utils import get_column_letter
 from PIL import Image, ImageTk
+import yfinance as yf
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -31,7 +32,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.6"
+__version__ = "v.1.9.7"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1058,6 +1059,9 @@ def load_data(
             lambda x: x.split("|")[0].strip().split(" ")[4]
         )
 
+        # Add temporary Date column for merging gap info
+        df["Date"] = df["Date Opened"].dt.date
+
     else:  # BYOB BT data
         # Convert 'EntryTime' to datetime format
         df["EntryTime"] = pd.to_datetime(df["EntryTime"])
@@ -1074,6 +1078,28 @@ def load_data(
         # Determine start and end dates
         start_date = df["EntryTime"].min().date()
         end_date = df["EntryTime"].max().date()
+
+        # Add temporary Date column for merging gap info
+        df["Date"] = df["EntryTime"].dt.date
+
+    # Get SPX historical open/close from yahoo finance and calc gaps
+    start = start_date - dt.timedelta(10)
+    end = end_date + dt.timedelta(1)
+    spx = yf.Ticker("^SPX")
+    spx_history = spx.history(start=start, end=end, interval="1d")
+    spx_history["Gap"] = spx_history["Open"] - spx_history["Close"].shift(1)
+    spx_history["Gap%"] = spx_history["Gap"] / spx_history["Close"].shift(1) * 100
+    spx_history = spx_history.reset_index()  # Reset index to make 'Date' a column
+    spx_history["Date"] = spx_history["Date"].dt.date
+
+    # drop the rows from spx_history that are not in df
+    spx_history = spx_history[spx_history["Date"].isin(df["Date"].to_list())]
+
+    # Merge SPX gap information with the main dataframe
+    df = pd.merge(df, spx_history[["Date", "Gap", "Gap%"]], on="Date", how="left")
+
+    # Remove the temporary "Date" column if not needed
+    df = df.drop(columns=["Date"])
 
     return (
         df[~df["Day of Week"].isin(weekday_exclusions)],
@@ -1769,7 +1795,7 @@ def options_window(settings) -> None:
                         ),
                     ],
                     [
-                        sg.Text("Apply Exclusions to:", pad=((5,1), 5)),
+                        sg.Text("Apply Exclusions to:", pad=((5, 1), 5)),
                         sg.Combo(
                             ["Both", "Analysis", "Walk Forward Test"],
                             settings["-APPLY_EXCLUSIONS-"],
