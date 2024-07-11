@@ -1543,13 +1543,12 @@ def walk_forward_test(
                     source = os.path.splitext(strat)[0]
                     best_times_df = best_times_df[
                         best_times_df["Source"].str.endswith(source)
-                    ]
+                    ].sort_values("Values", ascending=False).head(num_tranches)
 
                 best_times = best_times_df["Top Times"].to_list()
                 for time in best_times:
                     # get the qty for this tranche time
                     qty = tranche_qtys[best_times.index(time)]
-
                     full_dt = dt.datetime.combine(
                         current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
                     )
@@ -2544,7 +2543,7 @@ def main():
                 # Resize the image and update the element
                 window_w, window_h = window.size
                 image_width_max = int(window_w * 0.90)
-                image_height_max = int(window_h * 0.5)
+                image_height_max = int(window_h * 0.45)
                 image_width = min(
                     image_width_max, int(image_height_max / image_aspect_ratio)
                 )
