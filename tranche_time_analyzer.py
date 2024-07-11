@@ -31,7 +31,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.2"
+__version__ = "v.1.9.3"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1586,14 +1586,16 @@ def walk_forward_test(
                         )
                         strat_dict["Current Value"] += pnl
                         strat_dict["Current Day PnL"] += pnl
-
-            num_tranches = strat_dict["Num Tranches"]
-            tranche_qtys = strat_dict["Tranche Qtys"]
-            log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys)
-            if portfolio_mode:
-                num_tranches = strat_dict["Port Num Tranches"]
-                tranche_qtys = strat_dict["Port Tranche Qtys"]
-                log_pnl_and_trades(port_dict, num_tranches, tranche_qtys)
+            
+            if current_weekday in day_list:
+                # make sure its not the weekend
+                num_tranches = strat_dict["Num Tranches"]
+                tranche_qtys = strat_dict["Tranche Qtys"]
+                log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys)
+                if portfolio_mode:
+                    num_tranches = strat_dict["Port Num Tranches"]
+                    tranche_qtys = strat_dict["Port Tranche Qtys"]
+                    log_pnl_and_trades(port_dict, num_tranches, tranche_qtys)
 
             def calc_metrics(strat_dict: dict, strat: str, results: dict) -> None:
                 # calc metrics and log the results for the day
