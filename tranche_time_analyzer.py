@@ -32,7 +32,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.9.7"
+__version__ = "v.1.10.0"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -325,7 +325,7 @@ def create_excel_file(
     long_avg_period = settings["-AVG_PERIOD_2-"]
     long_weight = settings["-PERIOD_2_WEIGHT-"] / 100
     top_x = settings["-TOP_X-"]
-    if settings["-APPLY_EXCLUSIONS-"] != "Walk Forward Test":
+    if settings["-APPLY_EXCLUSIONS-"] == "Walk Forward Test":
         weekday_exclusions = []
     else:
         weekday_exclusions = settings["-WEEKDAY_EXCLUSIONS-"]
@@ -743,6 +743,15 @@ def get_weekday_pnl_chart(results):
     return img_str
 
 
+def get_spx_gaps(start_date, end_date):
+    start = start_date - dt.timedelta(10) # make sure we get a few days before for calcs
+    end = end_date + dt.timedelta(1) # make sure we get the end date
+    spx = yf.Ticker("^SPX")
+    spx_history = spx.history(start=start, end=end, interval="1d")
+    spx_history["Gap"] = spx_history["Open"] - spx_history["Close"].shift(1)
+    spx_history["Gap%"] = spx_history["Gap"] / spx_history["Close"].shift(1) * 100
+    return spx_history
+
 def get_top_times(
     df_dict, strategy_settings, date: dt.datetime.date = None, top_n_override=0
 ) -> pd.DataFrame:
@@ -1054,17 +1063,15 @@ def load_data(
         df["Date"] = df["EntryTime"].dt.date
 
     # Get SPX historical open/close from yahoo finance and calc gaps
-    start = start_date - dt.timedelta(10)
-    end = end_date + dt.timedelta(1)
-    spx = yf.Ticker("^SPX")
-    spx_history = spx.history(start=start, end=end, interval="1d")
-    spx_history["Gap"] = spx_history["Open"] - spx_history["Close"].shift(1)
-    spx_history["Gap%"] = spx_history["Gap"] / spx_history["Close"].shift(1) * 100
+    spx_history = get_spx_gaps(start_date, end_date)
     spx_history = spx_history.reset_index()  # Reset index to make 'Date' a column
     spx_history["Date"] = spx_history["Date"].dt.date
 
     # drop the rows from spx_history that are not in df
     spx_history = spx_history[spx_history["Date"].isin(df["Date"].to_list())]
+
+    # remove already present gap column from OO data
+    df = df.drop(columns=['Gap'], errors='ignore')
 
     # Merge SPX gap information with the main dataframe
     df = pd.merge(df, spx_history[["Date", "Gap", "Gap%"]], on="Date", how="left")
@@ -1138,10 +1145,15 @@ def run_analysis_threaded(
         source = os.path.splitext(os.path.basename(file))[0]
         for right_type, day_dict in result_dicts.items():
             if right_type not in df_dicts:
-                df_dicts[right_type] = {}
+                df_dicts[right_type] = {
+                    "All": {},
+                    "Mon": {},
+                    "Tue": {},
+                    "Wed": {},
+                    "Thu": {},
+                    "Fri": {},
+                }
             for day, df_dict in day_dict.items():
-                if day not in df_dicts[right_type]:
-                    df_dicts[right_type][day] = {}
                 df_dicts[right_type][day][source] = df_dict
 
     for _best in ["Best P/C", "Best P/C Gap Up", "Best P/C Gap Down"]:
@@ -1161,7 +1173,7 @@ def run_analysis_threaded(
                 _right += " Gap Up"
             elif _best.endswith("Gap Down"):
                 _right += " Gap Down"
-                
+
             if _right in df_dicts:
                 for _day, _day_dict in df_dicts[_right].items():
                     for _source, _df_dict in _day_dict.items():
@@ -1306,6 +1318,9 @@ def walk_forward_test(
             strats.append("Weekday-P_C_Comb")
         elif settings["-PUT_OR_CALL-"]:
             strats.append("All-Best_P_or_C")
+        if settings["-GAP_ANALYSIS-"]:
+            for _strat in strats.copy():
+                strats.append(f"{_strat}-Gap")
     else:
         strats = ["Portfolio"] + list(strategy_settings.keys())
 
@@ -1398,6 +1413,17 @@ def walk_forward_test(
         current_date = warm_start
     else:
         current_date = start_test_date
+    
+    # determine if we need to use gaps
+    spx_history = pd.DataFrame()
+    for setting in strategy_settings.values():
+        if setting["-GAP_ANALYSIS-"]:
+            spx_history = get_spx_gaps(current_date, end)
+            # reset the index to just the date, dropping the time component
+            spx_history = spx_history.reset_index()
+            spx_history["Date"] = spx_history["Date"].dt.date
+            spx_history = spx_history.set_index("Date")
+
     while current_date <= end:
         # check for cancel flag to stop thread
         if cancel_flag.is_set():
@@ -1518,24 +1544,61 @@ def walk_forward_test(
 
             def log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys):
                 if portfolio_mode:
-                    if settings["-PUT_OR_CALL-"] and settings["-IDV_WEEKDAY-"]:
-                        df_dict = df_dicts["Best P/C"][current_weekday]
-                    elif settings["-PUT_OR_CALL-"]:
-                        df_dict = df_dicts["Best P/C"]["All"]
-                    elif settings["-IDV_WEEKDAY-"]:
-                        df_dict = df_dicts["Put-Call Comb"][current_weekday]
+                    # determine which strat to use
+                    if settings["-PUT_OR_CALL-"]:
+                        _strat = "Best P/C"
                     else:
-                        df_dict = df_dicts["Put-Call Comb"]["All"]
-                else:
-                    if strat == "All-P_C_Comb":
-                        df_dict = df_dicts["Put-Call Comb"]["All"]
-                    elif strat == "Weekday-P_C_Comb":
-                        df_dict = df_dicts["Put-Call Comb"][current_weekday]
-                    elif strat == "All-Best_P_or_C":
-                        df_dict = df_dicts["Best P/C"]["All"]
-                    elif strat == "Weekday-Best_P_or_C":
-                        df_dict = df_dicts["Best P/C"][current_weekday]
+                        _strat = "Put-Call Comb"
+                    
+                    # determine if we use gaps and if up/down
+                    _gap = ""
+                    if settings["-GAP_ANALYSIS-"]:
+                        try:
+                            if spx_history.at[current_date, "Gap"] > 0:
+                                _gap = " Gap Up"
+                            else:
+                                _gap = " Gap Down"
+                        except KeyError as e:
+                            # probably a day market was not open (holiday)
+                            pass
+                    _strat = _strat + _gap # add onto the end of strat name
 
+                    # determine which weekday to use
+                    if settings["-IDV_WEEKDAY-"]:
+                        _weekday = current_weekday
+                    else:
+                        _weekday = "All"
+
+                else:
+                    # determine strat name for df_dicts
+                    if "P_C_Comb" in strat:
+                        _strat = "Put-Call Comb"
+                    else:
+                        _strat = "Best P/C"
+                                       
+                    # determine gap type
+                    _gap = ""
+                    if "Gap" in strat:
+                        try:
+                            if spx_history.at[current_date, "Gap"] > 0:
+                                _gap = " Gap Up"
+                            else:
+                                _gap = " Gap Down"
+                        except KeyError as e:
+                            # probably a day market was not open (holiday)
+                            pass
+                    _strat = _strat + _gap # add onto the end of strat name     
+
+                    # determin weekday type
+                    if strat.startswith("All"):
+                        _weekday = "All"
+                    else:
+                        _weekday = current_weekday
+                
+                # finally select the appropriate df_dict
+                df_dict = df_dicts[_strat][_weekday]
+
+                # get the best times for this strat
                 best_times_df = get_top_times(
                     df_dict, strategy_settings, best_time_date, num_tranches
                 )
@@ -2394,7 +2457,10 @@ def main():
                     if isinstance(element, sg.Table):
                         # For Table elements, we need to update the values differently
                         data = old_window.key_dict[key].Values
-                        element.update(values=data, num_rows=len(data))
+                        if key == "-PNL_TABLE_CHART-":
+                            element.update(values=data, num_rows=min(len(data), 4))
+                        else:
+                            element.update(values=data, num_rows=len(data))
 
                     elif isinstance(element, sg.Checkbox):
                         # For Checkbox elements, we need to use the 'value' parameter
@@ -2666,7 +2732,7 @@ def main():
                 table_data, img_data = get_pnl_plot(results)
                 chart_images["-PNL_CHART-"] = img_data
                 window["-PNL_TABLE_CHART-"].update(
-                    values=table_data, num_rows=len(table_data)
+                    values=table_data, num_rows=min(len(table_data), 4)
                 )
 
                 chart_images["-WEEKDAY_PNL_CHART-"] = get_weekday_pnl_chart(results)
