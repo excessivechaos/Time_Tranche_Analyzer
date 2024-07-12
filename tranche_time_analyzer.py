@@ -32,7 +32,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.10.0"
+__version__ = "v.1.10.1"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -407,10 +407,11 @@ def create_excel_file(
                     _df = _df[_df["OptionType"] == "C"]
                 
                 # filter for gaps
+                _gap_type = "Gap%" if settings["-GAP_TYPE-"] == "%" else "Gap"
                 if strat.endswith("Gap Up"):
-                    _df = _df[_df["Gap"] > 0]
+                    _df = _df[_df[_gap_type] > settings["-GAP_THRESHOLD-"]]
                 elif strat.endswith("Gap Down"):
-                    _df = _df[_df["Gap"] < 0]
+                    _df = _df[_df[_gap_type] < -settings["-GAP_THRESHOLD-"]]
 
                 # run the analysis
                 df_output, df_output_1mo_avg = analyze(_df, settings)
@@ -1218,9 +1219,12 @@ def update_strategy_settings(values, settings):
     ]:
         if option not in settings:
             settings[option] = []
-
     if "-APPLY_EXCLUSIONS-" not in settings:
         settings["-APPLY_EXCLUSIONS-"] = "Both"
+    if "-GAP_THRESHOLD-" not in settings:
+        settings["-GAP_THRESHOLD-"] = 0   
+    if "-GAP_TYPE-" not in settings:
+        settings["-GAP_TYPE-"] = "%"
 
 
 def validate_strategy_settings(strategy_settings):
@@ -1543,25 +1547,28 @@ def walk_forward_test(
                 best_time_date = current_date - relativedelta(weeks=1)
 
             def log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys):
+                # determine gap info
+                gap_str = ""
+                if settings["-GAP_ANALYSIS-"]:
+                    _gap_type = "Gap%" if settings["-GAP_TYPE-"] == "%" else "Gap"
+                    try:
+                        gap_value = spx_history.at[current_date, _gap_type]
+                    except KeyError as e:
+                        # probably a day market was not open (i.e. holiday)
+                        gap_value = 0
+                    if gap_value > settings["-GAP_THRESHOLD-"]:
+                        gap_str = " Gap Up"
+                    elif gap_value < -settings["-GAP_THRESHOLD-"]:
+                        gap_str = " Gap Down"
+
                 if portfolio_mode:
                     # determine which strat to use
                     if settings["-PUT_OR_CALL-"]:
                         _strat = "Best P/C"
                     else:
                         _strat = "Put-Call Comb"
-                    
-                    # determine if we use gaps and if up/down
-                    _gap = ""
-                    if settings["-GAP_ANALYSIS-"]:
-                        try:
-                            if spx_history.at[current_date, "Gap"] > 0:
-                                _gap = " Gap Up"
-                            else:
-                                _gap = " Gap Down"
-                        except KeyError as e:
-                            # probably a day market was not open (holiday)
-                            pass
-                    _strat = _strat + _gap # add onto the end of strat name
+                        
+                    _strat = _strat + gap_str # add gap info onto the end of strat name
 
                     # determine which weekday to use
                     if settings["-IDV_WEEKDAY-"]:
@@ -1577,19 +1584,12 @@ def walk_forward_test(
                         _strat = "Best P/C"
                                        
                     # determine gap type
-                    _gap = ""
-                    if "Gap" in strat:
-                        try:
-                            if spx_history.at[current_date, "Gap"] > 0:
-                                _gap = " Gap Up"
-                            else:
-                                _gap = " Gap Down"
-                        except KeyError as e:
-                            # probably a day market was not open (holiday)
-                            pass
-                    _strat = _strat + _gap # add onto the end of strat name     
+                    if "Gap" not in strat:
+                        gap_str = ""
 
-                    # determin weekday type
+                    _strat = _strat + gap_str # add gap onto the end of strat name     
+
+                    # determine weekday type
                     if strat.startswith("All"):
                         _weekday = "All"
                     else:
@@ -1803,6 +1803,19 @@ def options_window(settings) -> None:
                 "Analysis Options",
                 [
                     [
+                        sg.Text("Apply Exclusions to:", pad=((5, 1), 5)),
+                        sg.Combo(
+                            ["Both", "Analysis", "Walk Forward Test"],
+                            settings["-APPLY_EXCLUSIONS-"],
+                            key="-APPLY_EXCLUSIONS-",
+                            font=font,
+                            tooltip="Apply the excluded events/weekdays to the analysis\nof best times, or just the walk-forward test, or both.",
+                            pad=(0, 5),
+                            readonly=True,
+                        ),
+                        
+                    ],
+                    [
                         Checkbox(
                             "Put or Call",
                             settings["-PUT_OR_CALL-"],
@@ -1820,26 +1833,6 @@ def options_window(settings) -> None:
                             tooltip="Compare selecting the best times for each specific weekday to trade for that weekday",
                         ),
                         Checkbox(
-                            "Use Gap Analysis",
-                            settings["-GAP_ANALYSIS-"],
-                            key="-GAP_ANALYSIS-",
-                            font=font,
-                            size=(10, 1),
-                            tooltip="Look for the best times for gap up and down days",
-                        ),
-                    ],
-                    [
-                        sg.Text("Apply Exclusions to:", pad=((5, 1), 5)),
-                        sg.Combo(
-                            ["Both", "Analysis", "Walk Forward Test"],
-                            settings["-APPLY_EXCLUSIONS-"],
-                            key="-APPLY_EXCLUSIONS-",
-                            font=font,
-                            tooltip="Apply the excluded events/weekdays to the analysis\nof best times, or just the walk-forward test, or both.",
-                            pad=(0, 5),
-                            readonly=True,
-                        ),
-                        Checkbox(
                             "Auto Exclusions",
                             settings["-AUTO_EXCLUSIONS-"],
                             key="-AUTO_EXCLUSIONS-",
@@ -1848,6 +1841,23 @@ def options_window(settings) -> None:
                             pad=(5,5),
                             tooltip="Allow Walk-Forward test to determine which events to exclude\nbased on whether the event has -EV from prior lookback period.\nNote: This will require an additional warmup period.",
                         ),
+                    ],
+                    
+                    [
+                        sg.HorizontalSeparator()
+                    ],
+                    [
+                        Checkbox(
+                            "Use Gap Analysis",
+                            settings["-GAP_ANALYSIS-"],
+                            key="-GAP_ANALYSIS-",
+                            font=font,
+                            size=(10, 1),
+                            tooltip="Look for the best times for gap up and down days",
+                        ),
+                        sg.Text("Threshold:"),
+                        sg.Input(settings["-GAP_THRESHOLD-"], size=(5, 1), key="-GAP_THRESHOLD-"),
+                        sg.Combo(["%", "Points"], settings["-GAP_TYPE-"], readonly=True, key="-GAP_TYPE-")
                     ],
                 ],
                 expand_x=True,
@@ -1911,6 +1921,12 @@ def options_window(settings) -> None:
             settings["-PUT_OR_CALL-"] = values["-PUT_OR_CALL-"]
             settings["-IDV_WEEKDAY-"] = values["-IDV_WEEKDAY-"]
             settings["-GAP_ANALYSIS-"] = values["-GAP_ANALYSIS-"]
+            try:
+                settings["-GAP_THRESHOLD-"] = float(values["-GAP_THRESHOLD-"])
+            except ValueError:
+                sg.popup_no_border("Please correct Gap Threshold value")
+                continue
+            settings["-GAP_TYPE-"] = values["-GAP_TYPE-"]
             settings["-APPLY_EXCLUSIONS-"] = values["-APPLY_EXCLUSIONS-"]
             settings["-AUTO_EXCLUSIONS-"] = values["-AUTO_EXCLUSIONS-"]
             if values["-FILE-"] and values["-FILE-"] != "Loaded":
