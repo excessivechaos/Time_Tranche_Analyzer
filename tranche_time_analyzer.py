@@ -290,22 +290,10 @@ def analyze(
         df_grouped_combined = df.groupby(
             [df["EntryTime"].dt.to_period(agg_type), "Time"]
         )
-        df_grouped_puts = df[df["OptionType"] == "P"].groupby(
-            [df["EntryTime"].dt.to_period(agg_type), "Time"]
-        )
-        df_grouped_calls = df[df["OptionType"] == "C"].groupby(
-            [df["EntryTime"].dt.to_period(agg_type), "Time"]
-        )
         start_date = df["EntryTime"].min().date()
         end_date = df["EntryTime"].max().date()
     else:
         df_grouped_combined = df.groupby(
-            [df["Date Opened"].dt.to_period(agg_type), "Time Opened"]
-        )
-        df_grouped_puts = df[df["OptionType"] == "P"].groupby(
-            [df["Date Opened"].dt.to_period(agg_type), "Time Opened"]
-        )
-        df_grouped_calls = df[df["OptionType"] == "C"].groupby(
             [df["Date Opened"].dt.to_period(agg_type), "Time Opened"]
         )
         start_date = df["Date Opened"].min().date()
@@ -319,26 +307,10 @@ def analyze(
         df_output_combined, df_output_1mo_avg_combined = perform_analysis(
             df_grouped_combined
         )
-    if df[df["OptionType"] == "P"].empty or not settings["-PUT_OR_CALL-"]:
-        df_output_puts, df_output_1mo_avg_puts = pd.DataFrame(
-            columns=["Date Range"]
-        ), pd.DataFrame(columns=["Date Range"])
-    else:
-        df_output_puts, df_output_1mo_avg_puts = perform_analysis(df_grouped_puts)
-    if df[df["OptionType"] == "C"].empty or not settings["-PUT_OR_CALL-"]:
-        df_output_calls, df_output_1mo_avg_calls = pd.DataFrame(
-            columns=["Date Range"]
-        ), pd.DataFrame(columns=["Date Range"])
-    else:
-        df_output_calls, df_output_1mo_avg_calls = perform_analysis(df_grouped_calls)
 
     return (
         df_output_combined,
         df_output_1mo_avg_combined,
-        df_output_puts,
-        df_output_1mo_avg_puts,
-        df_output_calls,
-        df_output_1mo_avg_calls,
     )
 
 
@@ -405,55 +377,54 @@ def create_excel_file(
                 ],
                 key=lambda day: day_to_num[day],
             )
-        df_dicts = {"Put/Call Comb": {}, "Puts": {}, "Calls": {}}
-        for day in days_sorted:
-            # check for cancel flag to stop thread
-            if cancel_flag.is_set():
-                return
-            if day == "All":
-                _df = df
-            else:
-                _df = df[df["Day of Week"] == day]
-            (
-                df_output,
-                df_output_1mo_avg,
-                df_output_puts,
-                df_output_1mo_avg_puts,
-                df_output_calls,
-                df_output_1mo_avg_calls,
-            ) = analyze(_df, settings)
-            # store the results and the original df in case we need it later
-            df_dicts["Put/Call Comb"][day[:3]] = {"org_df": _df, "result_df": df_output}
-            df_dicts["Puts"][day[:3]] = {
-                "org_df": _df[_df["OptionType"] == "P"],
-                "result_df": df_output_puts,
-            }
-            df_dicts["Calls"][day[:3]] = {
-                "org_df": _df[_df["OptionType"] == "C"],
-                "result_df": df_output_calls,
-            }
+        
+        df_dicts = {"Put-Call Comb": {}}
+        if settings["-PUT_OR_CALL-"]:
+            df_dicts["Puts"] = {}
+            df_dicts["Calls"] = {}
 
-            # create the sheets
-            df_output.to_excel(writer, sheet_name=f"P-C_Comb_{day[:3]}", index=False)
-            df_output_1mo_avg.to_excel(
-                writer, sheet_name=f"P-C_Comb_1mo-{day[:3]}", index=False
-            )
-            if settings["-PUT_OR_CALL-"]:
-                df_output_puts.to_excel(
-                    writer, sheet_name=f"Puts_{day[:3]}", index=False
-                )
-                df_output_calls.to_excel(
-                    writer, sheet_name=f"Calls_{day[:3]}", index=False
-                )
-                df_output_1mo_avg_puts.to_excel(
-                    writer, sheet_name=f"Puts_1mo-{day[:3]}", index=False
-                )
-                df_output_1mo_avg_calls.to_excel(
-                    writer, sheet_name=f"Calls_1mo-{day[:3]}", index=False
+        if settings["-GAP_ANALYSIS-"]:
+            for strat in df_dicts.copy():
+                df_dicts[f"{strat} Gap Up"] = {}
+                df_dicts[f"{strat} Gap Down"] = {}
+
+        for strat in df_dicts:
+            for day in days_sorted:
+                # check for cancel flag to stop thread
+                if cancel_flag.is_set():
+                    return
+                
+                # filter for the weekday
+                if day == "All":
+                    _df = df
+                else:
+                    _df = df[df["Day of Week"] == day]
+                
+                # filter for calls/puts
+                if strat.startswith("Puts"):
+                    _df = _df[_df["OptionType"] == "P"]
+                elif strat.startswith("Calls"):
+                    _df = _df[_df["OptionType"] == "C"]
+                
+                # filter for gaps
+                if strat.endswith("Gap Up"):
+                    _df = _df[_df["Gap"] > 0]
+                elif strat.endswith("Gap Down"):
+                    _df = _df[_df["Gap"] < 0]
+
+                # run the analysis
+                df_output, df_output_1mo_avg = analyze(_df, settings)
+                # store the results and the original df in case we need it later
+                df_dicts[strat][day[:3]] = {"org_df": _df, "result_df": df_output}
+
+                # create the sheets
+                df_output.to_excel(writer, sheet_name=f"{strat}_{day[:3]}", index=False)
+                df_output_1mo_avg.to_excel(
+                    writer, sheet_name=f"{strat}_1mo-{day[:3]}", index=False
                 )
 
         # use All df from Put/Call Combined for row and col lengths
-        df_output = df_dicts["Put/Call Comb"]["All"]["result_df"]
+        df_output = df_dicts["Put-Call Comb"]["All"]["result_df"]
         # Set the PCR columns to percentage format
         percent_format = workbook.add_format({"num_format": "0.00%", "align": "center"})
         top_x_format = workbook.add_format(
@@ -1147,16 +1118,7 @@ def run_analysis_threaded(
     open_files,
 ):
     # initialize df_dicts
-    df_dicts = {"Put/Call Comb": {}, "Puts": {}, "Calls": {}}
-    for key in df_dicts:
-        df_dicts[key] = {
-            "All": {},
-            "Mon": {},
-            "Tue": {},
-            "Wed": {},
-            "Thu": {},
-            "Fri": {},
-        }
+    df_dicts = {}
 
     for file in files_list:
         strategy = (
@@ -1175,27 +1137,35 @@ def run_analysis_threaded(
 
         source = os.path.splitext(os.path.basename(file))[0]
         for right_type, day_dict in result_dicts.items():
+            if right_type not in df_dicts:
+                df_dicts[right_type] = {}
             for day, df_dict in day_dict.items():
+                if day not in df_dicts[right_type]:
+                    df_dicts[right_type][day] = {}
                 df_dicts[right_type][day][source] = df_dict
 
-    df_dicts["Best P/C"] = {
-        "All": {},
-        "Mon": {},
-        "Tue": {},
-        "Wed": {},
-        "Thu": {},
-        "Fri": {},
-    }
+    for _best in ["Best P/C", "Best P/C Gap Up", "Best P/C Gap Down"]:
+        df_dicts[_best] = {
+            "All": {},
+            "Mon": {},
+            "Tue": {},
+            "Wed": {},
+            "Thu": {},
+            "Fri": {},
+        }
 
-    # combine the put and call dfs into 1 dict for dertmining the best time
-    # from among both individual datasets
-    for _day, _day_dict in df_dicts["Puts"].items():
-        for _source, _df_dict in _day_dict.items():
-            df_dicts["Best P/C"][_day][f"Put||{_source}"] = _df_dict
-
-    for _day, _day_dict in df_dicts["Calls"].items():
-        for _source, _df_dict in _day_dict.items():
-            df_dicts["Best P/C"][_day][f"Call||{_source}"] = _df_dict
+        # combine the put and call dfs into 1 dict for dertmining the best time
+        # from among both individual datasets
+        for _right in ["Puts", "Calls"]:
+            if _best.endswith("Gap Up"):
+                _right += " Gap Up"
+            elif _best.endswith("Gap Down"):
+                _right += " Gap Down"
+                
+            if _right in df_dicts:
+                for _day, _day_dict in df_dicts[_right].items():
+                    for _source, _df_dict in _day_dict.items():
+                        df_dicts[_best][_day][f"{_right.removesuffix("s")}||{_source}"] = _df_dict
 
     results_queue.put(("-RUN_ANALYSIS_END-", df_dicts))
     return df_dicts
@@ -1232,9 +1202,10 @@ def update_strategy_settings(values, settings):
         "-PUT_OR_CALL-",
         "-IDV_WEEKDAY-",
         "-AUTO_EXCLUSIONS-",
+        "-GAP_ANALYSIS-",
     ]:
         if option not in settings:
-            settings[option] = [] if option.endswith("EXCLUSIONS-") else False
+            settings[option] = []
 
     if "-APPLY_EXCLUSIONS-" not in settings:
         settings["-APPLY_EXCLUSIONS-"] = "Both"
@@ -1291,7 +1262,7 @@ def walk_forward_test(
     start_date = dt.date.min
     end_date = dt.date.max
     # loop through all the source dfs
-    for df_dict in df_dicts["Put/Call Comb"]["All"].values():
+    for df_dict in df_dicts["Put-Call Comb"]["All"].values():
         # find the latest start date
         _start_date = df_dict["org_df"]["EntryTime"].min().date()
         if _start_date > start_date:
@@ -1552,14 +1523,14 @@ def walk_forward_test(
                     elif settings["-PUT_OR_CALL-"]:
                         df_dict = df_dicts["Best P/C"]["All"]
                     elif settings["-IDV_WEEKDAY-"]:
-                        df_dict = df_dicts["Put/Call Comb"][current_weekday]
+                        df_dict = df_dicts["Put-Call Comb"][current_weekday]
                     else:
-                        df_dict = df_dicts["Put/Call Comb"]["All"]
+                        df_dict = df_dicts["Put-Call Comb"]["All"]
                 else:
                     if strat == "All-P_C_Comb":
-                        df_dict = df_dicts["Put/Call Comb"]["All"]
+                        df_dict = df_dicts["Put-Call Comb"]["All"]
                     elif strat == "Weekday-P_C_Comb":
-                        df_dict = df_dicts["Put/Call Comb"][current_weekday]
+                        df_dict = df_dicts["Put-Call Comb"][current_weekday]
                     elif strat == "All-Best_P_or_C":
                         df_dict = df_dicts["Best P/C"]["All"]
                     elif strat == "Weekday-Best_P_or_C":
@@ -1786,12 +1757,12 @@ def options_window(settings) -> None:
                             tooltip="Compare selecting the best times for each specific weekday to trade for that weekday",
                         ),
                         Checkbox(
-                            "Auto Exclusions",
-                            settings["-AUTO_EXCLUSIONS-"],
-                            key="-AUTO_EXCLUSIONS-",
+                            "Use Gap Analysis",
+                            settings["-GAP_ANALYSIS-"],
+                            key="-GAP_ANALYSIS-",
                             font=font,
                             size=(10, 1),
-                            tooltip="Allow Walk-Forward test to determine which events to exclude\nbased on whether the event has -EV from prior lookback period.\nNote: This will require an additional warmup period.",
+                            tooltip="Look for the best times for gap up and down days",
                         ),
                     ],
                     [
@@ -1804,6 +1775,15 @@ def options_window(settings) -> None:
                             tooltip="Apply the excluded events/weekdays to the analysis\nof best times, or just the walk-forward test, or both.",
                             pad=(0, 5),
                             readonly=True,
+                        ),
+                        Checkbox(
+                            "Auto Exclusions",
+                            settings["-AUTO_EXCLUSIONS-"],
+                            key="-AUTO_EXCLUSIONS-",
+                            font=font,
+                            size=(10, 1),
+                            pad=(5,5),
+                            tooltip="Allow Walk-Forward test to determine which events to exclude\nbased on whether the event has -EV from prior lookback period.\nNote: This will require an additional warmup period.",
                         ),
                     ],
                 ],
@@ -1867,6 +1847,7 @@ def options_window(settings) -> None:
             ]
             settings["-PUT_OR_CALL-"] = values["-PUT_OR_CALL-"]
             settings["-IDV_WEEKDAY-"] = values["-IDV_WEEKDAY-"]
+            settings["-GAP_ANALYSIS-"] = values["-GAP_ANALYSIS-"]
             settings["-APPLY_EXCLUSIONS-"] = values["-APPLY_EXCLUSIONS-"]
             settings["-AUTO_EXCLUSIONS-"] = values["-AUTO_EXCLUSIONS-"]
             if values["-FILE-"] and values["-FILE-"] != "Loaded":
@@ -1941,40 +1922,48 @@ def main():
     sg.theme_button_color(button_color)  # override button color
 
     def get_main_window(values=None, old_window=None):
-        tab_group_layout = []
-        for tg in ["Put/Call Comb", "Best P/C", "Puts", "Calls"]:
-            tg_layout = []
-            for day in ["All", "Mon", "Tue", "Wed", "Thu", "Fri"]:
-                tab = sg.Tab(
-                    day,
-                    [
+        tg_strat_layout = []
+        for tg_strat in ["Put-Call Comb", "Best P/C", "Puts", "Calls"]:
+            tg_gap_layout = []
+            for tg_gap in ["All", "Gap Up", "Gap Down"]:
+                tg_day_layout = []
+                for day in ["All", "Mon", "Tue", "Wed", "Thu", "Fri"]:
+                    tab = sg.Tab(
+                        day,
                         [
-                            sg.Table(
-                                (
-                                    old_window.key_dict[f"-TABLE_{day}_{tg}-"].Values
-                                    if old_window
-                                    else ""
-                                ),
-                                ["Top Times", "Avg", "Source File"],
-                                key=f"-TABLE_{day}_{tg}-",
-                                expand_x=True,
-                                auto_size_columns=True,
-                                # background_color="white",
-                                alternating_row_color="darkgrey",
-                                # header_text_color="black",
-                                # header_background_color="lightblue",
-                            )
-                        ]
-                    ],
+                            [
+                                sg.Table(
+                                    (
+                                        old_window.key_dict[f"-TABLE_{tg_strat}_{tg_gap}_{day}-"].Values
+                                        if old_window
+                                        else ""
+                                    ),
+                                    ["Top Times", "Avg", "Source File"],
+                                    key=f"-TABLE_{tg_strat}_{tg_gap}_{day}-",
+                                    expand_x=True,
+                                    auto_size_columns=True,
+                                    # background_color="white",
+                                    alternating_row_color="darkgrey",
+                                    # header_text_color="black",
+                                    # header_background_color="lightblue",
+                                )
+                            ]
+                        ],
+                        expand_x=True,
+                    )
+                    tg_day_layout.append(tab)
+                gap_group_tab = sg.Tab(
+                    tg_gap,
+                    [[sg.TabGroup([tg_day_layout], expand_x=True)]],
                     expand_x=True,
                 )
-                tg_layout.append(tab)
+                tg_gap_layout.append(gap_group_tab)
             main_group_tab = sg.Tab(
-                tg,
-                [[sg.TabGroup([tg_layout], expand_x=True)]],
+                tg_strat,
+                [[sg.TabGroup([tg_gap_layout], expand_x=True)]],
                 expand_x=True,
             )
-            tab_group_layout.append(main_group_tab)
+            tg_strat_layout.append(main_group_tab)
 
         chart_tab = sg.Tab(
             "Charts",
@@ -2105,7 +2094,7 @@ def main():
                 ]
             ],
         )
-        tab_group_layout.append(chart_tab)
+        tg_strat_layout.append(chart_tab)
 
         layout = [
             [
@@ -2359,7 +2348,7 @@ def main():
             ],
             [
                 sg.TabGroup(
-                    [tab_group_layout],
+                    [tg_strat_layout],
                     expand_x=True,
                     key="-TAB_GROUP-",
                 )
@@ -2389,7 +2378,7 @@ def main():
             tab_group = old_window["-TAB_GROUP-"]
             selected = tab_group.get()
             selected_id = [
-                "Put/Call Comb",
+                "Put-Call Comb",
                 "Best P/C",
                 "Puts",
                 "Calls",
@@ -2634,9 +2623,19 @@ def main():
 
                         top_times_df = get_top_times(df_dict, strategy_settings)
                         table_data = top_times_df.values.tolist()
-                        window[f"-TABLE_{day}_{right_type}-"].update(
-                            values=table_data, num_rows=len(table_data)
-                        )
+                        if right_type.endswith("Gap Up"):
+                            window[f"-TABLE_{right_type.removesuffix(" Gap Up")}_{"Gap Up"}_{day}-"].update(
+                                values=table_data, num_rows=len(table_data)
+                            )
+                        elif right_type.endswith("Gap Down"):
+                            window[f"-TABLE_{right_type.removesuffix(" Gap Down")}_{"Gap Down"}_{day}-"].update(
+                                values=table_data, num_rows=len(table_data)
+                            )
+                        else:
+                            window[f"-TABLE_{right_type}_{"All"}_{day}-"].update(
+                                values=table_data, num_rows=len(table_data)
+                            )
+
 
                 if values["-BACKTEST-"]:
                     path = os.path.join(
