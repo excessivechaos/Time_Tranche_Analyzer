@@ -32,7 +32,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.10.1"
+__version__ = "v.1.10.2"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -165,6 +165,10 @@ def analyze(
 ) -> Tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame
 ]:
+    if df.empty:
+        return pd.DataFrame(
+            columns=["Date Range"]
+        ), pd.DataFrame(columns=["Date Range"])
     short_avg_period = settings["-AVG_PERIOD_1-"]
     long_avg_period = settings["-AVG_PERIOD_2-"]
     short_weight = settings["-PERIOD_1_WEIGHT-"] / 100
@@ -388,7 +392,8 @@ def create_excel_file(
                 df_dicts[f"{strat} Gap Up"] = {}
                 df_dicts[f"{strat} Gap Down"] = {}
 
-        for strat in df_dicts:
+        gap_error = False
+        for strat in df_dicts.copy():
             for day in days_sorted:
                 # check for cancel flag to stop thread
                 if cancel_flag.is_set():
@@ -408,10 +413,17 @@ def create_excel_file(
                 
                 # filter for gaps
                 _gap_type = "Gap%" if settings["-GAP_TYPE-"] == "%" else "Gap"
-                if strat.endswith("Gap Up"):
-                    _df = _df[_df[_gap_type] > settings["-GAP_THRESHOLD-"]]
-                elif strat.endswith("Gap Down"):
-                    _df = _df[_df[_gap_type] < -settings["-GAP_THRESHOLD-"]]
+                try:
+                    if strat.endswith("Gap Up"):
+                        _df = _df[_df[_gap_type] > settings["-GAP_THRESHOLD-"]]
+                    elif strat.endswith("Gap Down"):
+                        _df = _df[_df[_gap_type] < -settings["-GAP_THRESHOLD-"]]
+                except KeyError:
+                    # gap data did not load, maybe no internet
+                    _df = pd.DataFrame(columns=df.columns)
+                    if not gap_error:
+                        gap_error = True # only notify once
+                        results_queue.put(("-ERROR-", "Gap data coulld not be loaded\nanalysis will continue without it"))
 
                 # run the analysis
                 df_output, df_output_1mo_avg = analyze(_df, settings)
@@ -1065,17 +1077,18 @@ def load_data(
 
     # Get SPX historical open/close from yahoo finance and calc gaps
     spx_history = get_spx_gaps(start_date, end_date)
-    spx_history = spx_history.reset_index()  # Reset index to make 'Date' a column
-    spx_history["Date"] = spx_history["Date"].dt.date
+    if not spx_history.empty:
+        spx_history = spx_history.reset_index()  # Reset index to make 'Date' a column
+        spx_history["Date"] = spx_history["Date"].dt.date
 
-    # drop the rows from spx_history that are not in df
-    spx_history = spx_history[spx_history["Date"].isin(df["Date"].to_list())]
+        # drop the rows from spx_history that are not in df
+        spx_history = spx_history[spx_history["Date"].isin(df["Date"].to_list())]
 
-    # remove already present gap column from OO data
-    df = df.drop(columns=['Gap'], errors='ignore')
+        # remove already present gap column from OO data
+        df = df.drop(columns=['Gap'], errors='ignore')
 
-    # Merge SPX gap information with the main dataframe
-    df = pd.merge(df, spx_history[["Date", "Gap", "Gap%"]], on="Date", how="left")
+        # Merge SPX gap information with the main dataframe
+        df = pd.merge(df, spx_history[["Date", "Gap", "Gap%"]], on="Date", how="left")
 
     # Remove the temporary "Date" column if not needed
     df = df.drop(columns=["Date"])
@@ -1423,10 +1436,11 @@ def walk_forward_test(
     for setting in strategy_settings.values():
         if setting["-GAP_ANALYSIS-"]:
             spx_history = get_spx_gaps(current_date, end)
-            # reset the index to just the date, dropping the time component
-            spx_history = spx_history.reset_index()
-            spx_history["Date"] = spx_history["Date"].dt.date
-            spx_history = spx_history.set_index("Date")
+            if not spx_history.empty:
+                # reset the index to just the date, dropping the time component
+                spx_history = spx_history.reset_index()
+                spx_history["Date"] = spx_history["Date"].dt.date
+                spx_history = spx_history.set_index("Date")
 
     while current_date <= end:
         # check for cancel flag to stop thread
@@ -1722,12 +1736,13 @@ def walk_forward_test(
         current_date += dt.timedelta(1)
 
     for strat in portfolio_metrics:
-        results[strat]["Date"] = pd.to_datetime(results[strat]["Date"])
-        if export_trades:
-            base_filename = f"{strat} - TradeLog_{str(uuid.uuid4())[:8]}"
-            ext = ".csv"
-            export_filename = get_next_filename(path, base_filename, ext)
-            portfolio_metrics[strat]["trade log"].to_csv(export_filename)
+        if not results[strat].empty:
+            results[strat]["Date"] = pd.to_datetime(results[strat]["Date"])
+            if export_trades:
+                base_filename = f"{strat} - TradeLog_{str(uuid.uuid4())[:8]}"
+                ext = ".csv"
+                export_filename = get_next_filename(path, base_filename, ext)
+                portfolio_metrics[strat]["trade log"].to_csv(export_filename)
     results_queue.put(("-BACKTEST_END-", results))
     return results
 
@@ -1885,18 +1900,39 @@ def options_window(settings) -> None:
             ),
         ],
     ]
-    # window_size = (int(screen_size[0] * 0.4), int(screen_size[1] * 0.48))
-    window_size = (int(650 * dpi_scale), int(580 * dpi_scale))
+    
     window = sg.Window(
         "Options",
         layout,
         no_titlebar=False,
-        size=window_size,
+        # size=window_size,
         finalize=True,
         modal=True,
         resizable=True,
     )
     Checkbox.initial(window)
+    # let window be made so the length is auto set
+    # the width always fills the screen when using the custom
+    # checkbox class, so we need to change the size.  Allowing
+    # the window to self size first we can get the correct height
+    window_height = window.size[1]
+    window_width = int(650 * dpi_scale)
+    window.TKroot.geometry(f"{window_width}x{window_height}")
+
+    # Now we need to move the window since it opens all the way left.
+    # We will position it at the cursor location since the options button is on the right
+    mouse_x = window.TKroot.winfo_pointerx()
+    mouse_y = window.TKroot.winfo_pointery()
+    x_cordinate = mouse_x - window_width
+    y_cordinate = mouse_y
+
+    # Ensure the window is fully visible
+    x_cordinate = max(0, min(x_cordinate, screen_size[0] - window_width))
+    y_cordinate = max(0, min(y_cordinate, screen_size[1] - window_height))
+
+    # Set the window position
+    window.TKroot.geometry(f"+{x_cordinate}+{y_cordinate}")
+    
     while True:
         event, values = window.read()
         if event in (sg.WIN_CLOSED, "Cancel"):
@@ -2022,7 +2058,7 @@ def main():
                                     expand_x=True,
                                     auto_size_columns=True,
                                     # background_color="white",
-                                    alternating_row_color="darkgrey",
+                                    # alternating_row_color="darkgrey",
                                     # header_text_color="black",
                                     # header_background_color="lightblue",
                                 )
@@ -2083,7 +2119,7 @@ def main():
                                                 num_rows=4,
                                                 auto_size_columns=True,
                                                 # background_color="lightgrey",
-                                                alternating_row_color="darkgrey",
+                                                # alternating_row_color="darkgrey",
                                                 # header_text_color="black",
                                                 # header_background_color="lightblue",
                                             )
@@ -2745,6 +2781,18 @@ def main():
                     test_running = False
 
             elif result_key == "-BACKTEST_END-":
+                window["-PROGRESS-"].update(visible=False)
+                window["Cancel"].update(visible=False)
+                window["Analyze"].update("Analyze", disabled=False)
+                test_running = False
+                check_result = True
+                for result_df in results.values():
+                    if result_df.empty:
+                        check_result = False
+                        break
+                if not check_result:
+                    sg.popup_no_border("One or more of your strategies or files contains no results.\nPerhaps the dataset does not go back far enough?")
+                    continue
                 table_data, img_data = get_pnl_plot(results)
                 chart_images["-PNL_CHART-"] = img_data
                 window["-PNL_TABLE_CHART-"].update(
@@ -2767,10 +2815,7 @@ def main():
                     window[chart].update(data=chart_image)
 
                 window["-TAB_GROUP-"].Widget.select(4)
-                window["-PROGRESS-"].update(visible=False)
-                window["Cancel"].update(visible=False)
-                window["Analyze"].update("Analyze", disabled=False)
-                test_running = False
+
                 # recreate window to have table columns auto adjust
                 new_theme = themes[values["-THEME-"]]
                 sg.theme(new_theme)
