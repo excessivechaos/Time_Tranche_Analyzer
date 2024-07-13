@@ -32,7 +32,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.10.2"
+__version__ = "v.1.10.3"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -2838,7 +2838,7 @@ def main():
                 test_running = False
 
             elif result_key == "-IMPORT_NEWS-":
-                sg.popup_no_border(results)
+                sg.popup_no_border(results, auto_close=True, auto_close_duration=5)
 
             elif result_key == "-ERROR-":
                 sg.popup_no_border(results)
