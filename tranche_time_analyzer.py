@@ -2519,6 +2519,8 @@ def main():
                         element.update(value=values[key])
                     elif not isinstance(element, sg.TabGroup):
                         # For most other elements, we can use the 'value' parameter
+                        if key == "-STRATEGY_SELECT-":
+                            element.update(values=old_window[key].Values)
                         try:
                             element.update(value=values[key])
                         except:
