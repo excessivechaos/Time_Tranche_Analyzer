@@ -22,6 +22,7 @@ from dateutil.relativedelta import relativedelta
 from openpyxl.utils import get_column_letter
 from PIL import Image, ImageTk
 import yfinance as yf
+from CSV_merger import main as csv_merger_window
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -32,7 +33,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.10.3"
+__version__ = "v.1.11.0"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -498,6 +499,68 @@ def chunk_list(input_list, chunk_size=4):
     return [
         input_list[i : i + chunk_size] for i in range(0, len(input_list), chunk_size)
     ]
+
+
+def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
+    """
+    Takes a trade log df and converts to an
+    Option Omega signal file that can be loaded
+    into OO for backtesting and adding to OO portfolio
+    """
+    signal_data = []
+    is_byob = is_BYOB_data(trade_log_df)
+    for _, trade in trade_log_df.iterrows():
+        if is_byob:
+            # BYOB data processing
+            open_datetime = trade["EntryTime"].strftime("%Y-%m-%d %H:%M")
+
+            # Handle close datetime
+            if pd.notnull(trade["CloseDate"]) and pd.notnull(trade["CloseTime"]):
+                close_datetime = f"{trade['CloseDate']} {trade['CloseTime'][:5]}"
+            else:
+                # Use OpenDate and set time to 16:00 if CloseDate or CloseTime is missing
+                close_datetime = f"{trade['OpenDate']} 16:00"
+
+            signal_data.append(
+                {
+                    "OPEN_DATETIME": open_datetime,
+                    "BUY_SELL": "S",  # We'll do short for the first leg
+                    "CALL_PUT": trade["OptionType"],
+                    "STRIKE": trade["ShortStrike"],
+                    "EXPIRATION": trade["OpenDate"],
+                    "QUANTITY": trade["qty"],
+                }
+            )
+            signal_data.append(
+                {
+                    "OPEN_DATETIME": open_datetime,
+                    "BUY_SELL": "B",  # We'll do long for the second leg
+                    "CALL_PUT": trade["OptionType"],
+                    "STRIKE": trade["LongStrike"],
+                    "EXPIRATION": trade["OpenDate"],
+                    "QUANTITY": trade["qty"],
+                }
+            )
+        else:
+            # OO data processing (unchanged)
+            legs = trade["Legs"].split("|")
+            for leg in legs:
+                leg_parts = leg.strip().split(" ")
+                signal_data.append(
+                    {
+                        "OPEN_DATETIME": trade["Date Opened"].strftime("%Y-%m-%d")
+                        + " "
+                        + trade["Time Opened"][:5],
+                        "BUY_SELL": "B" if leg_parts[5] == "BTO" else "S",
+                        "CALL_PUT": leg_parts[4],
+                        "STRIKE": leg_parts[3],
+                        "EXPIRATION": trade["Date Opened"].strftime("%Y-%m-%d"),
+                        "QUANTITY": int(leg_parts[0]) * trade["qty"],
+                    }
+                )
+    result_df = pd.DataFrame(signal_data)
+    result_df.to_csv(filename, index=False)
+    return result_df
 
 
 def get_dpi_scale():
@@ -1205,6 +1268,50 @@ def save_settings(settings, settings_filename, values):
         json.dump(settings, f, indent=4)
 
 
+def set_default_app_settings(app_settings):
+    # Setup defaults if setting did not load/exist
+    if "-THEME-" not in app_settings:
+        app_settings["-THEME-"] = "Light"
+    if "-AVG_PERIOD_1-" not in app_settings:
+        app_settings["-AVG_PERIOD_1-"] = "4"
+    if "-AVG_PERIOD_2-" not in app_settings:
+        app_settings["-AVG_PERIOD_2-"] = "8"
+    if "-PERIOD_1_WEIGHT-" not in app_settings:
+        app_settings["-PERIOD_1_WEIGHT-"] = "25"
+    if "-PERIOD_2_WEIGHT-" not in app_settings:
+        app_settings["-PERIOD_2_WEIGHT-"] = "75"
+    if "-TOP_X-" not in app_settings:
+        app_settings["-TOP_X-"] = "5"
+    if "-CALC_TYPE-" not in app_settings:
+        app_settings["-CALC_TYPE-"] = "PCR"
+    if "-AGG_TYPE-" not in app_settings:
+        app_settings["-AGG_TYPE-"] = "Monthly"
+    if "-OPEN_FILES-" not in app_settings:
+        app_settings["-OPEN_FILES-"] = False
+    if "-BACKTEST-" not in app_settings:
+        app_settings["-BACKTEST-"] = False
+    if "-START_VALUE-" not in app_settings:
+        app_settings["-START_VALUE-"] = "100000"
+    if "-START_DATE-" not in app_settings:
+        app_settings["-START_DATE-"] = ""
+    if "-END_DATE-" not in app_settings:
+        app_settings["-END_DATE-"] = ""
+    if "-EXPORT-" not in app_settings:
+        app_settings["-EXPORT-"] = False
+    if "-EXPORT_OO_SIG-" not in app_settings:
+        app_settings["-EXPORT_OO_SIG-"] = False
+    if "-SCALING-" not in app_settings:
+        app_settings["-SCALING-"] = False
+    if "-MIN_TRANCHES-" not in app_settings:
+        app_settings["-MIN_TRANCHES-"] = "5"
+    if "-MAX_TRANCHES-" not in app_settings:
+        app_settings["-MAX_TRANCHES-"] = "5"
+    if "-BP_PER-" not in app_settings:
+        app_settings["-BP_PER-"] = "6000"
+    if "-PORTFOLIO_MODE-" not in app_settings:
+        app_settings["-PORTFOLIO_MODE-"] = False
+
+
 def update_strategy_settings(values, settings):
     settings.update(
         {
@@ -1286,6 +1393,7 @@ def walk_forward_test(
     initial_value: float = 100_000,
     use_scaling=False,
     export_trades=False,
+    export_OO_sig=False,
 ):
     portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
     start_date = dt.date.min
@@ -1738,11 +1846,17 @@ def walk_forward_test(
     for strat in portfolio_metrics:
         if not results[strat].empty:
             results[strat]["Date"] = pd.to_datetime(results[strat]["Date"])
+            uuid_str = str(uuid.uuid4())[:8]
             if export_trades:
-                base_filename = f"{strat} - TradeLog_{str(uuid.uuid4())[:8]}"
+                base_filename = f"{strat} - TradeLog_{uuid_str}"
                 ext = ".csv"
                 export_filename = get_next_filename(path, base_filename, ext)
-                portfolio_metrics[strat]["trade log"].to_csv(export_filename)
+                portfolio_metrics[strat]["trade log"].to_csv(export_filename, index=False)
+            if export_OO_sig:
+                base_filename = f"{strat} - OO_Signal_File_{uuid_str}"
+                ext = ".csv"
+                export_filename = get_next_filename(path, base_filename, ext)
+                export_oo_sig_file(portfolio_metrics[strat]["trade log"], export_filename)
     results_queue.put(("-BACKTEST_END-", results))
     return results
 
@@ -1989,27 +2103,7 @@ def main():
     threading.Thread(target=find_and_import_news_events, daemon=True).start()
 
     # load default settings or last used
-    app_settings = {
-        "-THEME-": "Light",
-        "-AVG_PERIOD_1-": "4",
-        "-AVG_PERIOD_2-": "8",
-        "-PERIOD_1_WEIGHT-": "25",
-        "-PERIOD_2_WEIGHT-": "75",
-        "-TOP_X-": "5",
-        "-CALC_TYPE-": "PCR",
-        "-AGG_TYPE-": "Monthly",
-        "-OPEN_FILES-": False,
-        "-BACKTEST-": False,
-        "-START_VALUE-": "100000",
-        "-START_DATE-": "",
-        "-END_DATE-": "",
-        "-EXPORT-": False,
-        "-SCALING-": False,
-        "-MIN_TRANCHES-": "5",
-        "-MAX_TRANCHES-": "5",
-        "-BP_PER-": "6000",
-        "-PORTFOLIO_MODE-": False,
-    }
+    app_settings = {}
     settings_filename = os.path.join(os.path.curdir, "data", "tta_settings.json")
     if os.path.exists(settings_filename):
         try:
@@ -2033,6 +2127,9 @@ def main():
                     )
                 )
                 pass
+    # setup defaults if setting did not load/exist
+    set_default_app_settings(app_settings)
+
     sg.theme(themes[app_settings["-THEME-"]])
     sg.theme_button_color(button_color)  # override button color
 
@@ -2227,7 +2324,8 @@ def main():
                 ),
                 sg.pin(sg.Button("Cancel", pad=(20, 0), visible=False)),
                 sg.Push(),
-                sg.Button("Options"),
+                sg.Button("CSV Merger"),
+                
                 sg.Combo(
                     list(themes),
                     default_value=app_settings["-THEME-"],
@@ -2263,6 +2361,8 @@ def main():
                         size=(50, 1),
                     )
                 ),
+                sg.Push(),
+                sg.Button("Options"),
             ],
             [
                 sg.Frame(
@@ -2456,6 +2556,13 @@ def main():
                                 justification="r",
                                 tooltip="Amount of buying power to use for each contract.  This is only used to determine\nthe total number of contracts to trade each day when using scaling.",
                             ),
+                            sg.Push(),
+                            Checkbox(
+                                "Create OO Signal File",
+                                app_settings["-EXPORT_OO_SIG-"],
+                                key="-EXPORT_OO_SIG-",
+                                size=(16, 1),
+                            ),
                         ],
                     ],
                     expand_x=True,
@@ -2540,6 +2647,9 @@ def main():
             # button will not do anything for normal analysis
             cancel_flag.set()
             window["Cancel"].update("Canceling...", disabled=True)
+
+        elif event == "CSV Merger":
+            csv_merger_window()
 
         elif event == "Options":
             if values["-PORTFOLIO_MODE-"]:
@@ -2772,6 +2882,7 @@ def main():
                             end=end_date,
                             use_scaling=values["-SCALING-"],
                             export_trades=values["-EXPORT-"],
+                            export_OO_sig=values["-EXPORT_OO_SIG-"],
                         ),
                         daemon=True,
                     ).start()
