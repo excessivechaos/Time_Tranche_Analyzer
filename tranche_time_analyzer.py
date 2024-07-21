@@ -33,7 +33,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.11.0"
+__version__ = "v.1.11.1"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -558,8 +558,13 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
                         "QUANTITY": int(leg_parts[0]) * trade["qty"],
                     }
                 )
+    
     result_df = pd.DataFrame(signal_data)
-    result_df.to_csv(filename, index=False)
+    result_df.to_csv(filename, index=False) # full signal file with puts and calls
+    for right in ["Puts", "Calls"]: # separate signal files
+        fitlered = result_df[result_df["CALL_PUT"] == right[0]]
+        fitlered.to_csv(f"{right}_{filename}", index=False)
+    
     return result_df
 
 
