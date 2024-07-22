@@ -23,6 +23,7 @@ from openpyxl.utils import get_column_letter
 from PIL import Image, ImageTk
 import yfinance as yf
 from CSV_merger import main as csv_merger_window
+import seaborn as sns
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -166,7 +167,7 @@ def analyze(
 ) -> Tuple[
     pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame
 ]:
-    if df.empty:
+    if df.empty or settings["-PASSTHROUGH_MODE-"]:
         return pd.DataFrame(
             columns=["Date Range"]
         ), pd.DataFrame(columns=["Date Range"])
@@ -432,10 +433,11 @@ def create_excel_file(
                 df_dicts[strat][day[:3]] = {"org_df": _df, "result_df": df_output}
 
                 # create the sheets
-                df_output.to_excel(writer, sheet_name=f"{strat}_{day[:3]}", index=False)
-                df_output_1mo_avg.to_excel(
-                    writer, sheet_name=f"{strat}_1mo-{day[:3]}", index=False
-                )
+                if not settings["-PASSTHROUGH_MODE-"]:
+                    df_output.to_excel(writer, sheet_name=f"{strat}_{day[:3]}", index=False)
+                    df_output_1mo_avg.to_excel(
+                        writer, sheet_name=f"{strat}_1mo-{day[:3]}", index=False
+                    )
 
         # use All df from Put/Call Combined for row and col lengths
         df_output = df_dicts["Put-Call Comb"]["All"]["result_df"]
@@ -559,11 +561,14 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
                     }
                 )
     
+    path = os.path.dirname(filename)
+    basename = os.path.basename(filename)
     result_df = pd.DataFrame(signal_data)
     result_df.to_csv(filename, index=False) # full signal file with puts and calls
     for right in ["Puts", "Calls"]: # separate signal files
         fitlered = result_df[result_df["CALL_PUT"] == right[0]]
-        fitlered.to_csv(f"{right}_{filename}", index=False)
+        file_path = os.path.join(path, f"{right}_{basename}")
+        fitlered.to_csv(file_path, index=False)
     
     return result_df
 
@@ -583,7 +588,44 @@ def format_float(value):
     display purposes, but only when decimal is .0"""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
+    elif isinstance(value, bool):
+        return value
     return str(value)
+
+
+@with_gc
+def get_correlation_matrix(results):
+    # Create a DataFrame with daily PnL for each strategy
+    pnl_data = {strategy: df['Day PnL'] for strategy, df in results.items()}
+    pnl_df = pd.DataFrame(pnl_data)
+    
+    # Calculate the correlation matrix
+    corr_matrix = pnl_df.corr()
+    
+    # Create a heatmap
+    plt.figure(figsize=(8, 5))
+    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0)
+    plt.title('Strategy Correlation Matrix')
+
+    # Rotate x-axis labels
+    plt.xticks(rotation=30, ha='right')
+    
+    # Rotate y-axis labels
+    plt.yticks(rotation=0, ha='right')
+
+    # Adjust layout to prevent cutting off labels
+    plt.tight_layout()
+    
+    # Save the plot to a buffer
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    buf.seek(0)
+    
+    # Convert the image to base64
+    img_str = base64.b64encode(buf.getvalue())
+    plt.close()
+    
+    return img_str
 
 
 @with_gc
@@ -832,6 +874,7 @@ def get_spx_gaps(start_date, end_date):
     spx_history["Gap"] = spx_history["Open"] - spx_history["Close"].shift(1)
     spx_history["Gap%"] = spx_history["Gap"] / spx_history["Close"].shift(1) * 100
     return spx_history
+
 
 def get_top_times(
     df_dict, strategy_settings, date: dt.datetime.date = None, top_n_override=0
@@ -1330,6 +1373,7 @@ def update_strategy_settings(values, settings):
             "-MIN_TRANCHES-": values["-MIN_TRANCHES-"],
             "-MAX_TRANCHES-": values["-MAX_TRANCHES-"],
             "-BP_PER-": values["-BP_PER-"],
+            "-PASSTHROUGH_MODE-": values["-PASSTHROUGH_MODE-"],
         }
     )
 
@@ -1605,66 +1649,67 @@ def walk_forward_test(
             ):
                 skip_day = True
 
-            if use_scaling:
+            if not settings["-PASSTHROUGH_MODE-"]:
+                if use_scaling:
 
-                def determine_num_tranches(min_tranches, max_tranches, num_contracts):
-                    tranches = max_tranches
-                    while True:
-                        if num_contracts > tranches:
-                            max_tranche_qty = int(num_contracts / tranches)
-                            remain_qty = num_contracts - (tranches * max_tranche_qty)
-                            if remain_qty >= min_tranches or remain_qty == 0:
-                                # we're done we can stay at this number of tranches with
-                                # the remainder filling up another set of at least min tranches
-                                return tranches
-                            else:
-                                # we need to take a tranche away so we can try to fill up at
-                                # least 1 full set at min amount
-                                if tranches - 1 < min_tranches:
-                                    # we can't reduce any further, got with what we have
-                                    # even if that means we will be adding contracts below the min
+                    def determine_num_tranches(min_tranches, max_tranches, num_contracts):
+                        tranches = max_tranches
+                        while True:
+                            if num_contracts > tranches:
+                                max_tranche_qty = int(num_contracts / tranches)
+                                remain_qty = num_contracts - (tranches * max_tranche_qty)
+                                if remain_qty >= min_tranches or remain_qty == 0:
+                                    # we're done we can stay at this number of tranches with
+                                    # the remainder filling up another set of at least min tranches
                                     return tranches
                                 else:
-                                    tranches -= 1
-                        else:
-                            return num_contracts
+                                    # we need to take a tranche away so we can try to fill up at
+                                    # least 1 full set at min amount
+                                    if tranches - 1 < min_tranches:
+                                        # we can't reduce any further, got with what we have
+                                        # even if that means we will be adding contracts below the min
+                                        return tranches
+                                    else:
+                                        tranches -= 1
+                            else:
+                                return num_contracts
 
-                def determine_tranche_qtys(tranches):
-                    tranche_qtys = []
-                    for x in range(tranches):
-                        if x < num_contracts % tranches:
-                            # this is where we add the remaining contracts after filling up all tranches
-                            tranche_qtys.append(int(num_contracts / tranches) + 1)
-                        else:
-                            tranche_qtys.append(int(num_contracts / tranches))
-                    return tranche_qtys
+                    def determine_tranche_qtys(tranches):
+                        tranche_qtys = []
+                        for x in range(tranches):
+                            if x < num_contracts % tranches:
+                                # this is where we add the remaining contracts after filling up all tranches
+                                tranche_qtys.append(int(num_contracts / tranches) + 1)
+                            else:
+                                tranche_qtys.append(int(num_contracts / tranches))
+                        return tranche_qtys
 
-                min_tranches = settings["-MIN_TRANCHES-"]
-                max_tranches = settings["-MAX_TRANCHES-"]
-                bp_per_contract = settings["-BP_PER-"]
-                num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
-                tranches = determine_num_tranches(
-                    min_tranches, max_tranches, num_contracts
-                )
-                strat_dict["Num Tranches"] = tranches
-                strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
-                if portfolio_mode:
-                    equal_value = port_dict["Current Value"] / (
-                        len(portfolio_metrics) - 1
-                    )
-                    num_contracts = int(equal_value / bp_per_contract)
+                    min_tranches = settings["-MIN_TRANCHES-"]
+                    max_tranches = settings["-MAX_TRANCHES-"]
+                    bp_per_contract = settings["-BP_PER-"]
+                    num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
                     tranches = determine_num_tranches(
                         min_tranches, max_tranches, num_contracts
                     )
-                    strat_dict["Port Num Tranches"] = tranches
-                    strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(tranches)
-            else:
-                # not scaling
-                num_contracts = settings["-TOP_X-"]
-                strat_dict["Num Tranches"] = num_contracts
-                strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
-                strat_dict["Port Num Tranches"] = num_contracts
-                strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
+                    strat_dict["Num Tranches"] = tranches
+                    strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
+                    if portfolio_mode:
+                        equal_value = port_dict["Current Value"] / (
+                            len(portfolio_metrics) - 1
+                        )
+                        num_contracts = int(equal_value / bp_per_contract)
+                        tranches = determine_num_tranches(
+                            min_tranches, max_tranches, num_contracts
+                        )
+                        strat_dict["Port Num Tranches"] = tranches
+                        strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(tranches)
+                else:
+                    # not scaling
+                    num_contracts = settings["-TOP_X-"]
+                    strat_dict["Num Tranches"] = num_contracts
+                    strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
+                    strat_dict["Port Num Tranches"] = num_contracts
+                    strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
 
             if settings["-AGG_TYPE-"] == "Monthly":
                 # date for best times should be the month prior as we don't know the future yet
@@ -1739,18 +1784,28 @@ def walk_forward_test(
                         .head(num_tranches)
                     )
 
-                best_times = best_times_df["Top Times"].to_list()
+                if settings["-PASSTHROUGH_MODE-"]:
+                    # get all the times this traded on this date
+                    source_df = df_dicts["Put-Call Comb"]["All"][source]["org_df"]
+                    _filtered_df = source_df[source_df["EntryTime"].dt.date == current_date]
+                    best_times = _filtered_df["EntryTime"].dt.strftime("%H:%M:%S").to_list()
+                else: # no passthrough, use best times analysis
+                    best_times = best_times_df["Top Times"].to_list()
+
                 for time in best_times:
                     # get the qty for this tranche time
-                    qty = tranche_qtys[best_times.index(time)]
+                    qty = tranche_qtys[best_times.index(time)] if not settings["-PASSTHROUGH_MODE-"] else 1
                     full_dt = dt.datetime.combine(
                         current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
                     )
-                    source = best_times_df.loc[
-                        best_times_df["Top Times"] == time, "Source"
-                    ].values[0]
 
-                    source_df = df_dict[source]["org_df"]
+                    if not settings["-PASSTHROUGH_MODE-"]:
+                        # get the source df, we already have it from eariler for pass-through
+                        source = best_times_df.loc[
+                            best_times_df["Top Times"] == time, "Source"
+                        ].values[0]
+                        source_df = df_dict[source]["org_df"]
+
                     filtered_rows = source_df[source_df["EntryTime"] == full_dt].copy()
 
                     if filtered_rows.empty:
@@ -2303,6 +2358,22 @@ def main():
                                         ],
                                     ],
                                 ),
+                                sg.Tab(
+                                    "Correlation Matrix",
+                                    [
+                                        [
+                                            sg.Image(
+                                                key="-CORRELATION_MATRIX-",
+                                                size=(int(screen_size[0] * 0.25), int(screen_size[1] * 0.25)),
+                                                expand_x=True,
+                                                expand_y=True,
+    
+                                            )
+                                        ],
+                                    ],
+                                    key="-CORRELATION_MATRIX_TAB-",
+                                    visible=old_window["-CORRELATION_MATRIX_TAB-"].visible if old_window else False,
+                                ),
                             ]
                         ],
                         expand_x=True,
@@ -2366,8 +2437,9 @@ def main():
                         size=(50, 1),
                     )
                 ),
+                Checkbox("Pass-through Mode", False, key="-PASSTHROUGH_MODE-", size=(14, 1), tooltip="This will skip analysis and allow the trades\nto pass-through as is to the walk-forward test.\nThis can be used for adding non-tranche\nstrategies to the portfolio for analysis",),
                 sg.Push(),
-                sg.Button("Options"),
+                sg.Button("Options", button_color="green"),
             ],
             [
                 sg.Frame(
@@ -2923,7 +2995,9 @@ def main():
                 chart_images["-NEWS_AVG_PNL_CHART-"] = get_news_event_pnl_chart(
                     results, False
                 )
-
+                if values["-PORTFOLIO_MODE-"]:
+                    chart_images["-CORRELATION_MATRIX-"] = get_correlation_matrix(results)
+                    window["-CORRELATION_MATRIX_TAB-"].update(visible=True)
                 # resize the images to fit in the window
                 for chart, image_data in chart_images.items():
                     chart_image = resize_base64_image(
