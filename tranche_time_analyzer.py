@@ -1446,17 +1446,35 @@ def walk_forward_test(
 ):
     portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
     start_date = dt.date.min
+    passthrough_start_date = dt.date.min
     end_date = dt.date.max
     # loop through all the source dfs
-    for df_dict in df_dicts["Put-Call Comb"]["All"].values():
-        # find the latest start date
+    for source, df_dict in df_dicts["Put-Call Comb"]["All"].items():
+        try:
+            passthrough = strategy_settings[f"{source}.csv"]["-PASSTHROUGH_MODE-"]
+        except KeyError as e:
+            passthrough = False
+
         _start_date = df_dict["org_df"]["EntryTime"].min().date()
-        if _start_date > start_date:
-            start_date = _start_date
-        # find the earliest end date
         _end_date = df_dict["org_df"]["EntryTime"].max().date()
+        # find the latest start date
+        if not passthrough:
+            if _start_date > start_date:
+                start_date = _start_date
+        else:
+            # we need to treat passthrough seperate since there is no
+            # warm up period necessary.
+            if _start_date > passthrough_start_date:
+                passthrough_start_date = _start_date
+
+        # find the earliest end date passthrough doesn't matter here
         if _end_date < end_date:
             end_date = _end_date
+        
+
+            # find the earliest end date
+            if _end_date < end_date:
+                end_date = _end_date
 
     max_long_avg_period = max(
         [
@@ -1482,6 +1500,8 @@ def walk_forward_test(
             warm_up_date = warm_start + relativedelta(months=max_long_avg_period)
             using_auto_exclusions = True
             break
+    # now we just need to see if the passthrough strats start later
+    warm_up_date = max(warm_up_date, passthrough_start_date)
 
     if not portfolio_mode:
         settings = strategy_settings["-SINGLE_MODE-"]
