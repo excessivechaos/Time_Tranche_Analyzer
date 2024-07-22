@@ -8,3 +8,5 @@ python-dateutil
 psgcompiler==1.6.1
 pillow
 dateutil
+seaborn
+yfinance
