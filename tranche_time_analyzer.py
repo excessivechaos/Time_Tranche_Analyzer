@@ -1374,6 +1374,7 @@ def update_strategy_settings(values, settings):
             "-MAX_TRANCHES-": values["-MAX_TRANCHES-"],
             "-BP_PER-": values["-BP_PER-"],
             "-PASSTHROUGH_MODE-": values["-PASSTHROUGH_MODE-"],
+            "-PORT_WEIGHT-": values["-PORT_WEIGHT-"],
         }
     )
 
@@ -1419,6 +1420,9 @@ def validate_strategy_settings(strategy_settings):
             )
             strategy_settings[strategy]["-BP_PER-"] = float(
                 strategy_settings[strategy]["-BP_PER-"]
+            )
+            strategy_settings[strategy]["-PORT_WEIGHT-"] = float(
+                strategy_settings[strategy]["-PORT_WEIGHT-"]
             )
         except ValueError:
             return (
@@ -1714,10 +1718,8 @@ def walk_forward_test(
                     strat_dict["Num Tranches"] = tranches
                     strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
                     if portfolio_mode:
-                        equal_value = port_dict["Current Value"] / (
-                            len(portfolio_metrics) - 1
-                        )
-                        num_contracts = int(equal_value / bp_per_contract)
+                        weighted_value = port_dict["Current Value"] * settings["-PORT_WEIGHT-"] / 100
+                        num_contracts = int(weighted_value / bp_per_contract)
                         tranches = determine_num_tranches(
                             min_tranches, max_tranches, num_contracts
                         )
@@ -1809,12 +1811,27 @@ def walk_forward_test(
                     source_df = df_dicts["Put-Call Comb"]["All"][source]["org_df"]
                     _filtered_df = source_df[source_df["EntryTime"].dt.date == current_date]
                     best_times = _filtered_df["EntryTime"].dt.strftime("%H:%M:%S").to_list()
+                    # we don't determine the tranche qtys in passthrough mode, we just need
+                    # to trade whaterver is in the trade log for that day.  Let's determine
+                    # the qtys to trade for each trade in the log.
+                    tranche_qtys = []
+                    for _ in best_times:
+                        if use_scaling:
+                            current_value = strat_dict["Current Value"]
+                            # calc total qty
+                            total_qty = current_value * settings["-PORT_WEIGHT-"] / 100 / settings["-BP_PER-"]
+                            
+                            # qty per trade
+                            qty = int(total_qty / len(best_times))
+                            tranche_qtys.append(max(qty, 1))
+                        else:
+                            tranche_qtys.append(1)
                 else: # no passthrough, use best times analysis
                     best_times = best_times_df["Top Times"].to_list()
 
                 for time in best_times:
                     # get the qty for this tranche time
-                    qty = tranche_qtys[best_times.index(time)] if not settings["-PASSTHROUGH_MODE-"] else 1
+                    qty = tranche_qtys[best_times.index(time)]
                     full_dt = dt.datetime.combine(
                         current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
                     )
@@ -2653,6 +2670,16 @@ def main():
                                 justification="r",
                                 tooltip="Amount of buying power to use for each contract.  This is only used to determine\nthe total number of contracts to trade each day when using scaling.",
                             ),
+                            sg.pin(sg.Text("Portfolio Weight", visible=app_settings["-PORTFOLIO_MODE-"], key="-PORT_WEIGHT_TEXT1-")),
+                            sg.pin(sg.Input(
+                                "100",
+                                key="-PORT_WEIGHT-",
+                                size=(5, 1),
+                                justification="c",
+                                tooltip="The weight the selected strategy will have in the portfolio rebalanced daily.",
+                                visible=app_settings["-PORTFOLIO_MODE-"],
+                            )),
+                            sg.pin(sg.Text("%", pad=(0,0), visible=app_settings["-PORTFOLIO_MODE-"], key="-PORT_WEIGHT_TEXT2-")),
                             sg.Push(),
                             Checkbox(
                                 "Create OO Signal File",
@@ -2853,6 +2880,7 @@ def main():
                 if strategies:
                     # select the first strategy in the list
                     window["-STRATEGY_SELECT-"].update(value=strategies[0])
+                    
             else:
                 strategies = ["-SINGLE_MODE-"]
                 window["-STRATEGY_SELECT-"].update(values=[])
@@ -2861,13 +2889,17 @@ def main():
             for strategy in strategies:
                 strategy_settings[strategy] = {}
                 update_strategy_settings(values, strategy_settings[strategy])
+                # set the portfolio weightings to equal weight
+                strategy_settings[strategy]["-PORT_WEIGHT-"] = 100 / len(strategies)
+                window["-PORT_WEIGHT-"].update(format_float(strategy_settings[strategy]["-PORT_WEIGHT-"]))
 
             # We must continue so the GUI does not update with old values from the values dict
             continue
 
         elif event == "-PORTFOLIO_MODE-":
             portfolio_mode = values["-PORTFOLIO_MODE-"]
-            window["-STRATEGY_SELECT-"].update(visible=portfolio_mode)
+            for key in ["-STRATEGY_SELECT-", "-PORT_WEIGHT_TEXT1-", "-PORT_WEIGHT-", "-PORT_WEIGHT_TEXT2-"]:
+                window[key].update(visible=portfolio_mode)
 
             if portfolio_mode:
                 files = values["-FILE-"].split(";")
@@ -2884,6 +2916,9 @@ def main():
             for strategy in strategies:
                 strategy_settings[strategy] = {}
                 update_strategy_settings(values, strategy_settings[strategy])
+                # set the portfolio weightings to equal weight
+                strategy_settings[strategy]["-PORT_WEIGHT-"] = 100 / len(strategies)
+                window["-PORT_WEIGHT-"].update(format_float(strategy_settings[strategy]["-PORT_WEIGHT-"]))
 
         elif event == "-STRATEGY_SELECT-":
             selected_strategy = values["-STRATEGY_SELECT-"]
