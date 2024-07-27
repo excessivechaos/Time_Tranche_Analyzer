@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.12.0"
+__version__ = "v.1.12.1"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
