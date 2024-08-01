@@ -168,9 +168,9 @@ def analyze(
     pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame
 ]:
     if df.empty or settings["-PASSTHROUGH_MODE-"]:
-        return pd.DataFrame(
+        return pd.DataFrame(columns=["Date Range"]), pd.DataFrame(
             columns=["Date Range"]
-        ), pd.DataFrame(columns=["Date Range"])
+        )
     short_avg_period = settings["-AVG_PERIOD_1-"]
     long_avg_period = settings["-AVG_PERIOD_2-"]
     short_weight = settings["-PERIOD_1_WEIGHT-"] / 100
@@ -383,7 +383,7 @@ def create_excel_file(
                 ],
                 key=lambda day: day_to_num[day],
             )
-        
+
         df_dicts = {"Put-Call Comb": {}}
         if settings["-PUT_OR_CALL-"]:
             df_dicts["Puts"] = {}
@@ -400,19 +400,19 @@ def create_excel_file(
                 # check for cancel flag to stop thread
                 if cancel_flag.is_set():
                     return
-                
+
                 # filter for the weekday
                 if day == "All":
                     _df = df
                 else:
                     _df = df[df["Day of Week"] == day]
-                
+
                 # filter for calls/puts
                 if strat.startswith("Puts"):
                     _df = _df[_df["OptionType"] == "P"]
                 elif strat.startswith("Calls"):
                     _df = _df[_df["OptionType"] == "C"]
-                
+
                 # filter for gaps
                 _gap_type = "Gap%" if settings["-GAP_TYPE-"] == "%" else "Gap"
                 try:
@@ -424,8 +424,13 @@ def create_excel_file(
                     # gap data did not load, maybe no internet
                     _df = pd.DataFrame(columns=df.columns)
                     if not gap_error:
-                        gap_error = True # only notify once
-                        results_queue.put(("-ERROR-", "Gap data coulld not be loaded\nanalysis will continue without it"))
+                        gap_error = True  # only notify once
+                        results_queue.put(
+                            (
+                                "-ERROR-",
+                                "Gap data coulld not be loaded\nanalysis will continue without it",
+                            )
+                        )
 
                 # run the analysis
                 df_output, df_output_1mo_avg = analyze(_df, settings)
@@ -434,7 +439,9 @@ def create_excel_file(
 
                 # create the sheets
                 if not settings["-PASSTHROUGH_MODE-"]:
-                    df_output.to_excel(writer, sheet_name=f"{strat}_{day[:3]}", index=False)
+                    df_output.to_excel(
+                        writer, sheet_name=f"{strat}_{day[:3]}", index=False
+                    )
                     df_output_1mo_avg.to_excel(
                         writer, sheet_name=f"{strat}_1mo-{day[:3]}", index=False
                     )
@@ -560,16 +567,16 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
                         "QUANTITY": int(leg_parts[0]) * trade["qty"],
                     }
                 )
-    
+
     path = os.path.dirname(filename)
     basename = os.path.basename(filename)
     result_df = pd.DataFrame(signal_data)
-    result_df.to_csv(filename, index=False) # full signal file with puts and calls
-    for right in ["Puts", "Calls"]: # separate signal files
+    result_df.to_csv(filename, index=False)  # full signal file with puts and calls
+    for right in ["Puts", "Calls"]:  # separate signal files
         fitlered = result_df[result_df["CALL_PUT"] == right[0]]
         file_path = os.path.join(path, f"{right}_{basename}")
         fitlered.to_csv(file_path, index=False)
-    
+
     return result_df
 
 
@@ -596,35 +603,35 @@ def format_float(value):
 @with_gc
 def get_correlation_matrix(results):
     # Create a DataFrame with daily PnL for each strategy
-    pnl_data = {strategy: df['Day PnL'] for strategy, df in results.items()}
+    pnl_data = {strategy: df["Day PnL"] for strategy, df in results.items()}
     pnl_df = pd.DataFrame(pnl_data)
-    
+
     # Calculate the correlation matrix
     corr_matrix = pnl_df.corr()
-    
+
     # Create a heatmap
     plt.figure(figsize=(8, 5))
-    sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0)
-    plt.title('Strategy Correlation Matrix')
+    sns.heatmap(corr_matrix, annot=True, cmap="coolwarm", vmin=-1, vmax=1, center=0)
+    plt.title("Strategy Correlation Matrix")
 
     # Rotate x-axis labels
-    plt.xticks(rotation=30, ha='right')
-    
+    plt.xticks(rotation=30, ha="right")
+
     # Rotate y-axis labels
-    plt.yticks(rotation=0, ha='right')
+    plt.yticks(rotation=0, ha="right")
 
     # Adjust layout to prevent cutting off labels
     plt.tight_layout()
-    
+
     # Save the plot to a buffer
     buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
+    plt.savefig(buf, format="png", dpi=150, bbox_inches="tight")
     buf.seek(0)
-    
+
     # Convert the image to base64
     img_str = base64.b64encode(buf.getvalue())
     plt.close()
-    
+
     return img_str
 
 
@@ -867,8 +874,10 @@ def get_weekday_pnl_chart(results):
 
 
 def get_spx_gaps(start_date, end_date):
-    start = start_date - dt.timedelta(10) # make sure we get a few days before for calcs
-    end = end_date + dt.timedelta(1) # make sure we get the end date
+    start = start_date - dt.timedelta(
+        10
+    )  # make sure we get a few days before for calcs
+    end = end_date + dt.timedelta(1)  # make sure we get the end date
     spx = yf.Ticker("^SPX")
     spx_history = spx.history(start=start, end=end, interval="1d")
     spx_history["Gap"] = spx_history["Open"] - spx_history["Close"].shift(1)
@@ -1196,7 +1205,7 @@ def load_data(
         spx_history = spx_history[spx_history["Date"].isin(df["Date"].to_list())]
 
         # remove already present gap column from OO data
-        df = df.drop(columns=['Gap'], errors='ignore')
+        df = df.drop(columns=["Gap"], errors="ignore")
 
         # Merge SPX gap information with the main dataframe
         df = pd.merge(df, spx_history[["Date", "Gap", "Gap%"]], on="Date", how="left")
@@ -1302,7 +1311,9 @@ def run_analysis_threaded(
             if _right in df_dicts:
                 for _day, _day_dict in df_dicts[_right].items():
                     for _source, _df_dict in _day_dict.items():
-                        df_dicts[_best][_day][f"{_right.removesuffix("s")}||{_source}"] = _df_dict
+                        df_dicts[_best][_day][
+                            f"{_right.removesuffix("s")}||{_source}"
+                        ] = _df_dict
 
     results_queue.put(("-RUN_ANALYSIS_END-", df_dicts))
     return df_dicts
@@ -1392,7 +1403,7 @@ def update_strategy_settings(values, settings):
     if "-APPLY_EXCLUSIONS-" not in settings:
         settings["-APPLY_EXCLUSIONS-"] = "Both"
     if "-GAP_THRESHOLD-" not in settings:
-        settings["-GAP_THRESHOLD-"] = 0   
+        settings["-GAP_THRESHOLD-"] = 0
     if "-GAP_TYPE-" not in settings:
         settings["-GAP_TYPE-"] = "%"
 
@@ -1474,7 +1485,6 @@ def walk_forward_test(
         # find the earliest end date passthrough doesn't matter here
         if _end_date < end_date:
             end_date = _end_date
-        
 
             # find the earliest end date
             if _end_date < end_date:
@@ -1610,8 +1620,8 @@ def walk_forward_test(
     if using_auto_exclusions:
         current_date = warm_start
     else:
-        current_date = start_test_date
-    
+        current_date = max(start_test_date, passthrough_start_date)
+
     # determine if we need to use gaps
     spx_history = pd.DataFrame()
     for setting in strategy_settings.values():
@@ -1676,12 +1686,16 @@ def walk_forward_test(
             if not settings["-PASSTHROUGH_MODE-"]:
                 if use_scaling:
 
-                    def determine_num_tranches(min_tranches, max_tranches, num_contracts):
+                    def determine_num_tranches(
+                        min_tranches, max_tranches, num_contracts
+                    ):
                         tranches = max_tranches
                         while True:
                             if num_contracts > tranches:
                                 max_tranche_qty = int(num_contracts / tranches)
-                                remain_qty = num_contracts - (tranches * max_tranche_qty)
+                                remain_qty = num_contracts - (
+                                    tranches * max_tranche_qty
+                                )
                                 if remain_qty >= min_tranches or remain_qty == 0:
                                     # we're done we can stay at this number of tranches with
                                     # the remainder filling up another set of at least min tranches
@@ -1718,13 +1732,17 @@ def walk_forward_test(
                     strat_dict["Num Tranches"] = tranches
                     strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
                     if portfolio_mode:
-                        weighted_value = port_dict["Current Value"] * settings["-PORT_WEIGHT-"] / 100
+                        weighted_value = (
+                            port_dict["Current Value"] * settings["-PORT_WEIGHT-"] / 100
+                        )
                         num_contracts = int(weighted_value / bp_per_contract)
                         tranches = determine_num_tranches(
                             min_tranches, max_tranches, num_contracts
                         )
                         strat_dict["Port Num Tranches"] = tranches
-                        strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(tranches)
+                        strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(
+                            tranches
+                        )
                 else:
                     # not scaling
                     num_contracts = settings["-TOP_X-"]
@@ -1761,8 +1779,8 @@ def walk_forward_test(
                         _strat = "Best P/C"
                     else:
                         _strat = "Put-Call Comb"
-                        
-                    _strat = _strat + gap_str # add gap info onto the end of strat name
+
+                    _strat = _strat + gap_str  # add gap info onto the end of strat name
 
                     # determine which weekday to use
                     if settings["-IDV_WEEKDAY-"]:
@@ -1776,19 +1794,19 @@ def walk_forward_test(
                         _strat = "Put-Call Comb"
                     else:
                         _strat = "Best P/C"
-                                       
+
                     # determine gap type
                     if "Gap" not in strat:
                         gap_str = ""
 
-                    _strat = _strat + gap_str # add gap onto the end of strat name     
+                    _strat = _strat + gap_str  # add gap onto the end of strat name
 
                     # determine weekday type
                     if strat.startswith("All"):
                         _weekday = "All"
                     else:
                         _weekday = current_weekday
-                
+
                 # finally select the appropriate df_dict
                 df_dict = df_dicts[_strat][_weekday]
 
@@ -1808,10 +1826,13 @@ def walk_forward_test(
 
                 if settings["-PASSTHROUGH_MODE-"]:
                     # get all the times this traded on this date
-                    source = os.path.splitext(strat)[0]
                     source_df = df_dicts["Put-Call Comb"]["All"][source]["org_df"]
-                    _filtered_df = source_df[source_df["EntryTime"].dt.date == current_date]
-                    best_times = _filtered_df["EntryTime"].dt.strftime("%H:%M:%S").to_list()
+                    _filtered_df = source_df[
+                        source_df["EntryTime"].dt.date == current_date
+                    ]
+                    best_times = (
+                        _filtered_df["EntryTime"].dt.strftime("%H:%M:%S").to_list()
+                    )
                     # we don't determine the tranche qtys in passthrough mode, we just need
                     # to trade whaterver is in the trade log for that day.  Let's determine
                     # the qtys to trade for each trade in the log.
@@ -1820,14 +1841,19 @@ def walk_forward_test(
                         if use_scaling:
                             current_value = strat_dict["Current Value"]
                             # calc total qty
-                            total_qty = current_value * settings["-PORT_WEIGHT-"] / 100 / settings["-BP_PER-"]
-                            
+                            total_qty = (
+                                current_value
+                                * settings["-PORT_WEIGHT-"]
+                                / 100
+                                / settings["-BP_PER-"]
+                            )
+
                             # qty per trade
                             qty = int(total_qty / len(best_times))
                             tranche_qtys.append(max(qty, 1))
                         else:
                             tranche_qtys.append(1)
-                else: # no passthrough, use best times analysis
+                else:  # no passthrough, use best times analysis
                     best_times = best_times_df["Top Times"].to_list()
 
                 for time in best_times:
@@ -1949,12 +1975,16 @@ def walk_forward_test(
                 base_filename = f"{strat} - TradeLog_{uuid_str}"
                 ext = ".csv"
                 export_filename = get_next_filename(path, base_filename, ext)
-                portfolio_metrics[strat]["trade log"].to_csv(export_filename, index=False)
+                portfolio_metrics[strat]["trade log"].to_csv(
+                    export_filename, index=False
+                )
             if export_OO_sig:
                 base_filename = f"{strat} - OO_Signal_File_{uuid_str}"
                 ext = ".csv"
                 export_filename = get_next_filename(path, base_filename, ext)
-                export_oo_sig_file(portfolio_metrics[strat]["trade log"], export_filename)
+                export_oo_sig_file(
+                    portfolio_metrics[strat]["trade log"], export_filename
+                )
     results_queue.put(("-BACKTEST_END-", results))
     return results
 
@@ -2040,7 +2070,6 @@ def options_window(settings) -> None:
                             pad=(0, 5),
                             readonly=True,
                         ),
-                        
                     ],
                     [
                         Checkbox(
@@ -2065,14 +2094,11 @@ def options_window(settings) -> None:
                             key="-AUTO_EXCLUSIONS-",
                             font=font,
                             size=(10, 1),
-                            pad=(5,5),
+                            pad=(5, 5),
                             tooltip="Allow Walk-Forward test to determine which events to exclude\nbased on whether the event has -EV from prior lookback period.\nNote: This will require an additional warmup period.",
                         ),
                     ],
-                    
-                    [
-                        sg.HorizontalSeparator()
-                    ],
+                    [sg.HorizontalSeparator()],
                     [
                         Checkbox(
                             "Use Gap Analysis",
@@ -2083,8 +2109,17 @@ def options_window(settings) -> None:
                             tooltip="Look for the best times for gap up and down days",
                         ),
                         sg.Text("Threshold:"),
-                        sg.Input(settings["-GAP_THRESHOLD-"], size=(5, 1), key="-GAP_THRESHOLD-"),
-                        sg.Combo(["%", "Points"], settings["-GAP_TYPE-"], readonly=True, key="-GAP_TYPE-")
+                        sg.Input(
+                            settings["-GAP_THRESHOLD-"],
+                            size=(5, 1),
+                            key="-GAP_THRESHOLD-",
+                        ),
+                        sg.Combo(
+                            ["%", "Points"],
+                            settings["-GAP_TYPE-"],
+                            readonly=True,
+                            key="-GAP_TYPE-",
+                        ),
                     ],
                 ],
                 expand_x=True,
@@ -2112,7 +2147,7 @@ def options_window(settings) -> None:
             ),
         ],
     ]
-    
+
     window = sg.Window(
         "Options",
         layout,
@@ -2144,7 +2179,7 @@ def options_window(settings) -> None:
 
     # Set the window position
     window.TKroot.geometry(f"+{x_cordinate}+{y_cordinate}")
-    
+
     while True:
         event, values = window.read()
         if event in (sg.WIN_CLOSED, "Cancel"):
@@ -2244,7 +2279,9 @@ def main():
                             [
                                 sg.Table(
                                     (
-                                        old_window.key_dict[f"-TABLE_{tg_strat}_{tg_gap}_{day}-"].Values
+                                        old_window.key_dict[
+                                            f"-TABLE_{tg_strat}_{tg_gap}_{day}-"
+                                        ].Values
                                         if old_window
                                         else ""
                                     ),
@@ -2402,15 +2439,21 @@ def main():
                                         [
                                             sg.Image(
                                                 key="-CORRELATION_MATRIX-",
-                                                size=(int(screen_size[0] * 0.25), int(screen_size[1] * 0.25)),
+                                                size=(
+                                                    int(screen_size[0] * 0.25),
+                                                    int(screen_size[1] * 0.25),
+                                                ),
                                                 expand_x=True,
                                                 expand_y=True,
-    
                                             )
                                         ],
                                     ],
                                     key="-CORRELATION_MATRIX_TAB-",
-                                    visible=old_window["-CORRELATION_MATRIX_TAB-"].visible if old_window else False,
+                                    visible=(
+                                        old_window["-CORRELATION_MATRIX_TAB-"].visible
+                                        if old_window
+                                        else False
+                                    ),
                                 ),
                             ]
                         ],
@@ -2439,7 +2482,6 @@ def main():
                 sg.pin(sg.Button("Cancel", pad=(20, 0), visible=False)),
                 sg.Push(),
                 sg.Button("CSV Merger"),
-                
                 sg.Combo(
                     list(themes),
                     default_value=app_settings["-THEME-"],
@@ -2475,7 +2517,16 @@ def main():
                         size=(50, 1),
                     )
                 ),
-                Checkbox("Pass-through Mode", False, key="-PASSTHROUGH_MODE-", size=(14, 1), tooltip="This will skip analysis and allow the trades\nto pass-through as is to the walk-forward test.\nThis can be used for adding non-tranche\nstrategies to the portfolio for analysis",),
+                sg.pin(
+                    Checkbox(
+                        "Pass-through Mode",
+                        False,
+                        key="-PASSTHROUGH_MODE-",
+                        size=(14, 1),
+                        tooltip="This will skip analysis and allow the trades\nto pass-through as is to the walk-forward test.\nThis can be used for adding non-tranche\nstrategies to the portfolio for analysis",
+                        visible=app_settings["-PORTFOLIO_MODE-"],
+                    )
+                ),
                 sg.Push(),
                 sg.Button("Options", button_color="green"),
             ],
@@ -2671,16 +2722,31 @@ def main():
                                 justification="r",
                                 tooltip="Amount of buying power to use for each contract.  This is only used to determine\nthe total number of contracts to trade each day when using scaling.",
                             ),
-                            sg.pin(sg.Text("Portfolio Weight", visible=app_settings["-PORTFOLIO_MODE-"], key="-PORT_WEIGHT_TEXT1-")),
-                            sg.pin(sg.Input(
-                                "100",
-                                key="-PORT_WEIGHT-",
-                                size=(5, 1),
-                                justification="c",
-                                tooltip="The weight the selected strategy will have in the portfolio rebalanced daily.",
-                                visible=app_settings["-PORTFOLIO_MODE-"],
-                            )),
-                            sg.pin(sg.Text("%", pad=(0,0), visible=app_settings["-PORTFOLIO_MODE-"], key="-PORT_WEIGHT_TEXT2-")),
+                            sg.pin(
+                                sg.Text(
+                                    "Portfolio Weight",
+                                    visible=app_settings["-PORTFOLIO_MODE-"],
+                                    key="-PORT_WEIGHT_TEXT1-",
+                                )
+                            ),
+                            sg.pin(
+                                sg.Input(
+                                    "100",
+                                    key="-PORT_WEIGHT-",
+                                    size=(5, 1),
+                                    justification="c",
+                                    tooltip="The weight the selected strategy will have in the portfolio rebalanced daily.",
+                                    visible=app_settings["-PORTFOLIO_MODE-"],
+                                )
+                            ),
+                            sg.pin(
+                                sg.Text(
+                                    "%",
+                                    pad=(0, 0),
+                                    visible=app_settings["-PORTFOLIO_MODE-"],
+                                    key="-PORT_WEIGHT_TEXT2-",
+                                )
+                            ),
                             sg.Push(),
                             Checkbox(
                                 "Create OO Signal File",
@@ -2881,7 +2947,7 @@ def main():
                 if strategies:
                     # select the first strategy in the list
                     window["-STRATEGY_SELECT-"].update(value=strategies[0])
-                    
+
             else:
                 strategies = ["-SINGLE_MODE-"]
                 window["-STRATEGY_SELECT-"].update(values=[])
@@ -2892,14 +2958,22 @@ def main():
                 update_strategy_settings(values, strategy_settings[strategy])
                 # set the portfolio weightings to equal weight
                 strategy_settings[strategy]["-PORT_WEIGHT-"] = 100 / len(strategies)
-                window["-PORT_WEIGHT-"].update(format_float(strategy_settings[strategy]["-PORT_WEIGHT-"]))
+                window["-PORT_WEIGHT-"].update(
+                    format_float(strategy_settings[strategy]["-PORT_WEIGHT-"])
+                )
 
             # We must continue so the GUI does not update with old values from the values dict
             continue
 
         elif event == "-PORTFOLIO_MODE-":
             portfolio_mode = values["-PORTFOLIO_MODE-"]
-            for key in ["-STRATEGY_SELECT-", "-PORT_WEIGHT_TEXT1-", "-PORT_WEIGHT-", "-PORT_WEIGHT_TEXT2-"]:
+            for key in [
+                "-STRATEGY_SELECT-",
+                "-PASSTHROUGH_MODE-",
+                "-PORT_WEIGHT_TEXT1-",
+                "-PORT_WEIGHT-",
+                "-PORT_WEIGHT_TEXT2-",
+            ]:
                 window[key].update(visible=portfolio_mode)
 
             if portfolio_mode:
@@ -2919,7 +2993,9 @@ def main():
                 update_strategy_settings(values, strategy_settings[strategy])
                 # set the portfolio weightings to equal weight
                 strategy_settings[strategy]["-PORT_WEIGHT-"] = 100 / len(strategies)
-                window["-PORT_WEIGHT-"].update(format_float(strategy_settings[strategy]["-PORT_WEIGHT-"]))
+                window["-PORT_WEIGHT-"].update(
+                    format_float(strategy_settings[strategy]["-PORT_WEIGHT-"])
+                )
 
         elif event == "-STRATEGY_SELECT-":
             selected_strategy = values["-STRATEGY_SELECT-"]
@@ -2987,18 +3063,17 @@ def main():
                         top_times_df = get_top_times(df_dict, strategy_settings)
                         table_data = top_times_df.values.tolist()
                         if right_type.endswith("Gap Up"):
-                            window[f"-TABLE_{right_type.removesuffix(" Gap Up")}_{"Gap Up"}_{day}-"].update(
-                                values=table_data, num_rows=len(table_data)
-                            )
+                            window[
+                                f"-TABLE_{right_type.removesuffix(" Gap Up")}_{"Gap Up"}_{day}-"
+                            ].update(values=table_data, num_rows=len(table_data))
                         elif right_type.endswith("Gap Down"):
-                            window[f"-TABLE_{right_type.removesuffix(" Gap Down")}_{"Gap Down"}_{day}-"].update(
-                                values=table_data, num_rows=len(table_data)
-                            )
+                            window[
+                                f"-TABLE_{right_type.removesuffix(" Gap Down")}_{"Gap Down"}_{day}-"
+                            ].update(values=table_data, num_rows=len(table_data))
                         else:
                             window[f"-TABLE_{right_type}_{"All"}_{day}-"].update(
                                 values=table_data, num_rows=len(table_data)
                             )
-
 
                 if values["-BACKTEST-"]:
                     path = os.path.join(
@@ -3037,7 +3112,9 @@ def main():
                         check_result = False
                         break
                 if not check_result:
-                    sg.popup_no_border("One or more of your strategies or files contains no results.\nPerhaps the dataset does not go back far enough?")
+                    sg.popup_no_border(
+                        "One or more of your strategies or files contains no results.\nPerhaps the dataset does not go back far enough?"
+                    )
                     continue
                 table_data, img_data = get_pnl_plot(results)
                 chart_images["-PNL_CHART-"] = img_data
@@ -3052,7 +3129,9 @@ def main():
                     results, False
                 )
                 if values["-PORTFOLIO_MODE-"]:
-                    chart_images["-CORRELATION_MATRIX-"] = get_correlation_matrix(results)
+                    chart_images["-CORRELATION_MATRIX-"] = get_correlation_matrix(
+                        results
+                    )
                     window["-CORRELATION_MATRIX_TAB-"].update(visible=True)
                 # resize the images to fit in the window
                 for chart, image_data in chart_images.items():
