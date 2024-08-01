@@ -1831,7 +1831,10 @@ def walk_forward_test(
                         source_df["EntryTime"].dt.date == current_date
                     ]
                     best_times = (
-                        _filtered_df["EntryTime"].dt.strftime("%H:%M:%S").to_list()
+                        _filtered_df["EntryTime"]
+                        .dt.strftime("%H:%M:%S")
+                        .unique()
+                        .tolist()
                     )
                     # we don't determine the tranche qtys in passthrough mode, we just need
                     # to trade whaterver is in the trade log for that day.  Let's determine
