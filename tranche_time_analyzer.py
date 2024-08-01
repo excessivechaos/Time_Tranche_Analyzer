@@ -1808,6 +1808,7 @@ def walk_forward_test(
 
                 if settings["-PASSTHROUGH_MODE-"]:
                     # get all the times this traded on this date
+                    source = os.path.splitext(strat)[0]
                     source_df = df_dicts["Put-Call Comb"]["All"][source]["org_df"]
                     _filtered_df = source_df[source_df["EntryTime"].dt.date == current_date]
                     best_times = _filtered_df["EntryTime"].dt.strftime("%H:%M:%S").to_list()
