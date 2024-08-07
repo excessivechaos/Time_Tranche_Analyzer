@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.12.2"
+__version__ = "v.1.13.0"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -595,9 +595,12 @@ def format_float(value):
     display purposes, but only when decimal is .0"""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
+    elif value == float("-inf"):
+        return ""
     elif isinstance(value, bool):
         return value
-    return str(value)
+    else:
+        return str(value)
 
 
 @with_gc
@@ -904,6 +907,7 @@ def get_top_times(
         agg_type = "M" if settings["-AGG_TYPE-"] == "Monthly" else "W"
         top_n = top_n_override if top_n_override else int(settings["-TOP_X-"])
         calc_type = settings["-CALC_TYPE-"]
+        threshold = settings["-TOP_TIME_THRESHOLD-"] / 100
         df_orig = _df_dict["result_df"]
 
         if not date:
@@ -923,8 +927,12 @@ def get_top_times(
             # missing data for this month
             continue
 
-        # Sort the values in descending order and select the top n
-        top_values = first_row_values.sort_values(ascending=False).head(top_n)
+        # Filter and sort the values in descending order and select the top n
+        top_values = (
+            first_row_values[first_row_values >= threshold]
+            .sort_values(ascending=False)
+            .head(top_n)
+        )
 
         # Format values based on calc_type and add to the list of all top values
         for time, value in top_values.items():
@@ -1369,6 +1377,8 @@ def set_default_app_settings(app_settings):
         app_settings["-BP_PER-"] = "6000"
     if "-PORTFOLIO_MODE-" not in app_settings:
         app_settings["-PORTFOLIO_MODE-"] = False
+    if "-TOP_TIME_THRESHOLD-" not in app_settings:
+        app_settings["-TOP_TIME_THRESHOLD-"] = ""
 
 
 def update_strategy_settings(values, settings):
@@ -1386,6 +1396,7 @@ def update_strategy_settings(values, settings):
             "-BP_PER-": values["-BP_PER-"],
             "-PASSTHROUGH_MODE-": values["-PASSTHROUGH_MODE-"],
             "-PORT_WEIGHT-": values["-PORT_WEIGHT-"],
+            "-TOP_TIME_THRESHOLD-": values["-TOP_TIME_THRESHOLD-"],
         }
     )
 
@@ -1435,6 +1446,12 @@ def validate_strategy_settings(strategy_settings):
             strategy_settings[strategy]["-PORT_WEIGHT-"] = float(
                 strategy_settings[strategy]["-PORT_WEIGHT-"]
             )
+            if strategy_settings[strategy]["-TOP_TIME_THRESHOLD-"]:
+                strategy_settings[strategy]["-TOP_TIME_THRESHOLD-"] = float(
+                    strategy_settings[strategy]["-TOP_TIME_THRESHOLD-"]
+                )
+            else:
+                strategy_settings[strategy]["-TOP_TIME_THRESHOLD-"] = float("-inf")
         except ValueError:
             return (
                 "Problem with values entered.\nPlease enter only positive whole numbers"
@@ -1485,10 +1502,6 @@ def walk_forward_test(
         # find the earliest end date passthrough doesn't matter here
         if _end_date < end_date:
             end_date = _end_date
-
-            # find the earliest end date
-            if _end_date < end_date:
-                end_date = _end_date
 
     max_long_avg_period = max(
         [
@@ -2601,12 +2614,25 @@ def main():
                                 tooltip="Highlight the top n times for each month in the heatmap.\nWill also display the top n times below",
                             ),
                             sg.Text("Time Tranches", pad=(5, 0)),
+                            sg.Text("Above:"),
+                            sg.Input(
+                                app_settings["-TOP_TIME_THRESHOLD-"],
+                                key="-TOP_TIME_THRESHOLD-",
+                                size=(4, 1),
+                                justification="c",
+                            ),
+                            sg.Text(
+                                app_settings["-CALC_TYPE-"],
+                                key="-CALC_TYPE_TEXT-",
+                                pad=(0, 0),
+                            ),
                             sg.Text("   Averaging Mode"),
                             sg.Combo(
                                 ["PCR", "PnL"],
                                 app_settings["-CALC_TYPE-"],
                                 key="-CALC_TYPE-",
                                 readonly=True,
+                                enable_events=True,
                             ),
                             sg.Text(
                                 "   Aggregation Period",
@@ -3037,6 +3063,9 @@ def main():
 
             window = new_window
             continue
+
+        elif event == "-CALC_TYPE-":
+            window["-CALC_TYPE_TEXT-"].update(values["-CALC_TYPE-"])
 
         # Update strategy settings when values change but not while analysis is running
         if (
