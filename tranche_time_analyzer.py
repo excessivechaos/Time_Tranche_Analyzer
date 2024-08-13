@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.13.0"
+__version__ = "v.1.13.1"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -331,13 +331,23 @@ def create_excel_file(
     long_avg_period = settings["-AVG_PERIOD_2-"]
     long_weight = settings["-PERIOD_2_WEIGHT-"] / 100
     top_x = settings["-TOP_X-"]
-    if settings["-APPLY_EXCLUSIONS-"] == "Walk Forward Test":
-        weekday_exclusions = []
-    else:
+    weekday_exclusions = []
+    news_date_exclusions = []
+    if settings["-APPLY_EXCLUSIONS-"] != "Walk Forward Test":
         weekday_exclusions = settings["-WEEKDAY_EXCLUSIONS-"]
-    result = load_data(file, weekday_exclusions)
+        # get list of news event dates to skip.
+        for release, date_list in news_events.items():
+            if release in settings["-NEWS_EXCLUSIONS-"]:
+                news_date_exclusions += date_list
+
+    # load the data
+    result = load_data(file)
     if result:
         df, start_date, end_date = result
+        filtered_df = df[
+            (~df["Day of Week"].isin(weekday_exclusions))
+            & (~df["EntryTime"].dt.date.isin(news_date_exclusions))
+        ]
     else:
         return
 
@@ -378,7 +388,7 @@ def create_excel_file(
             days_sorted = days_sorted + sorted(
                 [
                     d
-                    for d in df["Day of Week"].unique()
+                    for d in filtered_df["Day of Week"].unique()
                     if d not in settings["-WEEKDAY_EXCLUSIONS-"]
                 ],
                 key=lambda day: day_to_num[day],
@@ -402,40 +412,77 @@ def create_excel_file(
                     return
 
                 # filter for the weekday
+                # we will keep a dataset with exlusions filtered out and one
+                # with all the data.  We will sort and filter those both for
+                # the analysis but the analysis will only happen on the filtered df
+                # this will allow us to store either the filtered df that has the
+                # exclusions removed or the original df that was filtered for the analysis
+                # type, but still has the excluded events.  This filtered, but non-excluded
+                # df will be what is used for the WF test.  This allows events/weekday exclusions
+                # to be done for analysis only, but still traded during the WF test.
                 if day == "All":
                     _df = df
+                    _filtered_df = filtered_df
                 else:
                     _df = df[df["Day of Week"] == day]
+                    _filtered_df = filtered_df[filtered_df["Day of Week"] == day]
 
                 # filter for calls/puts
                 if strat.startswith("Puts"):
                     _df = _df[_df["OptionType"] == "P"]
+                    _filtered_df = _filtered_df[_filtered_df["OptionType"] == "P"]
                 elif strat.startswith("Calls"):
                     _df = _df[_df["OptionType"] == "C"]
+                    _filtered_df = _filtered_df[_filtered_df["OptionType"] == "C"]
 
                 # filter for gaps
                 _gap_type = "Gap%" if settings["-GAP_TYPE-"] == "%" else "Gap"
                 try:
                     if strat.endswith("Gap Up"):
                         _df = _df[_df[_gap_type] > settings["-GAP_THRESHOLD-"]]
+                        _filtered_df = _filtered_df[
+                            _filtered_df[_gap_type] > settings["-GAP_THRESHOLD-"]
+                        ]
                     elif strat.endswith("Gap Down"):
                         _df = _df[_df[_gap_type] < -settings["-GAP_THRESHOLD-"]]
+                        _filtered_df = _filtered_df[
+                            _filtered_df[_gap_type] < -settings["-GAP_THRESHOLD-"]
+                        ]
                 except KeyError:
                     # gap data did not load, maybe no internet
                     _df = pd.DataFrame(columns=df.columns)
+                    _filtered_df = pd.DataFrame(columns=df.columns)
                     if not gap_error:
                         gap_error = True  # only notify once
                         results_queue.put(
                             (
                                 "-ERROR-",
-                                "Gap data coulld not be loaded\nanalysis will continue without it",
+                                "Gap data could not be loaded!\nAnalysis will continue without it.",
                             )
                         )
 
                 # run the analysis
-                df_output, df_output_1mo_avg = analyze(_df, settings)
-                # store the results and the original df in case we need it later
-                df_dicts[strat][day[:3]] = {"org_df": _df, "result_df": df_output}
+                if settings["-APPLY_EXCLUSIONS-"] != "Walk Forward Test":
+                    # exclusions are only for WF, so use the non-filtered df
+                    df_output, df_output_1mo_avg = analyze(_df, settings)
+                    # store the results and the original df in case we need it later
+                    df_dicts[strat][day[:3]] = {"org_df": _df, "result_df": df_output}
+                else:
+                    # otherwise we use the filtered/excluded df for analysis
+                    df_output, df_output_1mo_avg = analyze(_filtered_df, settings)
+                    # store the results and the original df in case we need it later
+                    if settings["-APPLY_EXCLUSIONS-"] == "Analysis":
+                        # since we are only excluded from analysis we will store the non-filtered df
+                        df_dicts[strat][day[:3]] = {
+                            "org_df": _df,
+                            "result_df": df_output,
+                        }
+                    else:
+                        # otherwise we are exluding from both so we can should store the filtered df
+                        df_dicts[strat][day[:3]] = {
+                            "org_df": _filtered_df,
+                            "result_df": df_output,
+                        }
 
                 # create the sheets
                 if not settings["-PASSTHROUGH_MODE-"]:
