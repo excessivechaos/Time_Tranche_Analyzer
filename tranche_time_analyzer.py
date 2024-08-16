@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.13.1"
+__version__ = "v.1.14.0"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -176,7 +176,7 @@ def analyze(
     short_weight = settings["-PERIOD_1_WEIGHT-"] / 100
     long_weight = settings["-PERIOD_2_WEIGHT-"] / 100
     calc_type = settings["-CALC_TYPE-"]
-    agg_type = "M" if settings["-AGG_TYPE-"] == "Monthly" else "W"
+    agg_type = "".join(word[0] for word in settings["-AGG_TYPE-"].split("-"))
 
     def calculate_avg_pnl(df: pd.DataFrame) -> float:
         if df.columns[0] == "Date Opened":  # OO BT data
@@ -202,6 +202,10 @@ def analyze(
         if agg_type == "W":
             short_avg_period = int(short_avg_period * 4.33)
             long_avg_period = int(long_avg_period * 4.33)
+        elif agg_type == "SM":  # semi-monthly
+            short_avg_period = int(short_avg_period * 2)
+            long_avg_period = int(long_avg_period * 2)
+
         short_avg = df.rolling(short_avg_period, min_periods=1).mean()
         long_avg = df.rolling(long_avg_period, min_periods=1).mean()
         weighted_avg = short_weight * short_avg + long_weight * long_avg
@@ -220,9 +224,29 @@ def analyze(
                 previous_period_start = current_period_end - pd.DateOffset(
                     weeks=int(long_avg_period * 4.33)
                 )
+            elif agg_type == "SM":  # Semi-Monthly
+                if date.day <= 15:
+                    current_period_end = pd.Timestamp(date.year, date.month, 15)
+                    previous_period_start = current_period_end - pd.DateOffset(
+                        months=long_avg_period
+                    )
+                else:
+                    current_period_end = pd.Timestamp(
+                        date.year, date.month, date.days_in_month
+                    )
+                    previous_period_start = (
+                        current_period_end - pd.DateOffset(months=long_avg_period - 1)
+                    ).replace(day=1)
+                # if previous_period_start.day > 15:
+                #     previous_period_start = previous_period_start.replace(day=16)
+                # else:
+                #     previous_period_start = previous_period_start.replace(day=1)
             else:
                 current_period_end = date.to_timestamp() + pd.offsets.DateOffset(
                     freq=agg_type
+                )
+                previous_period_start = current_period_end - pd.DateOffset(
+                    freq=agg_type, periods=long_avg_period - 1
                 )
 
             if i == 0:
@@ -251,7 +275,7 @@ def analyze(
             df_calc, short_avg_period, long_avg_period, agg_type
         )
         one_month_avg = df_calc.rolling(
-            1 if agg_type == "M" else 4, min_periods=1
+            1 if agg_type == "M" else 2 if agg_type == "SM" else 4, min_periods=1
         ).mean()
 
         weighted_avg.sort_index(ascending=False, inplace=True)
@@ -292,18 +316,21 @@ def analyze(
         # filter for weekday exlusions
         df = df[~df["Day of Week"].isin(settings["-WEEKDAY_EXCLUSIONS-"])]
 
-    if is_BYOB_data(df):
+    if agg_type == "SM":
+        # Custom function to create semi-monthly periods
+        def semi_monthly_period(date):
+            return pd.Timestamp(
+                date.year, date.month, 15 if date.day <= 15 else date.days_in_month
+            )
+
+        df["period"] = df["EntryTime"].apply(semi_monthly_period)
+        df_grouped_combined = df.groupby(["period", "Time"])
+    else:
         df_grouped_combined = df.groupby(
             [df["EntryTime"].dt.to_period(agg_type), "Time"]
         )
-        start_date = df["EntryTime"].min().date()
-        end_date = df["EntryTime"].max().date()
-    else:
-        df_grouped_combined = df.groupby(
-            [df["Date Opened"].dt.to_period(agg_type), "Time Opened"]
-        )
-        start_date = df["Date Opened"].min().date()
-        end_date = df["Date Opened"].max().date()
+    start_date = df["EntryTime"].min().date()
+    end_date = df["EntryTime"].max().date()
 
     if df.empty:
         df_output_combined, df_output_1mo_avg_combined = pd.DataFrame(
@@ -951,7 +978,7 @@ def get_top_times(
             strategy = f"{source.split('||')[1]}.csv"
             settings = strategy_settings[strategy]
 
-        agg_type = "M" if settings["-AGG_TYPE-"] == "Monthly" else "W"
+        agg_type = "".join(word[0] for word in settings["-AGG_TYPE-"].split("-"))
         top_n = top_n_override if top_n_override else int(settings["-TOP_X-"])
         calc_type = settings["-CALC_TYPE-"]
         threshold = settings["-TOP_TIME_THRESHOLD-"] / 100
@@ -960,7 +987,24 @@ def get_top_times(
         if not date:
             df = df_orig.copy()
         else:
-            df = df_orig.loc[df_orig.index == pd.Period(date, freq=agg_type), :]
+            date_timestamp = pd.Timestamp(date)
+            if agg_type == "SM":
+                # For semi-monthly, we need to check if the date is in the first or second half of the month
+                if date_timestamp.day <= 15:
+                    period_start = date_timestamp.replace(day=1)
+                    period_end = date_timestamp.replace(day=15)
+                else:
+                    period_start = date_timestamp.replace(day=16)
+                    period_end = date_timestamp.replace(
+                        day=date_timestamp.days_in_month
+                    )
+                df = df_orig.loc[
+                    (df_orig.index >= period_start) & (df_orig.index <= period_end), :
+                ]
+            else:
+                df = df_orig.loc[
+                    df_orig.index == pd.Period(date_timestamp, freq=agg_type), :
+                ]
 
         if df.index.name != "Date Range":
             df.set_index("Date Range", inplace=True)
@@ -1208,47 +1252,34 @@ def load_data(
         # Convert 'Date Opened' to datetime format
         df["Date Opened"] = pd.to_datetime(df["Date Opened"])
 
-        # Add Day of week column
-        df["Day of Week"] = df["Date Opened"].dt.day_name()
-
-        # Sort by 'Date Opened' and 'Time Opened'
-        df.sort_values(["Date Opened", "Time Opened"], inplace=True)
-
-        # Determine start and end dates
-        start_date = df["Date Opened"].min().date()
-        end_date = df["Date Opened"].max().date()
-
-        # Add EntryTime Column for backtesting purposes
+        # Add EntryTime Column for analysis
         df["EntryTime"] = pd.to_datetime(
             df["Date Opened"].astype(str) + " " + df["Time Opened"]
         )
+
         # Add column for Option Right 'C' or 'P'
         df["OptionType"] = df["Legs"].apply(
             lambda x: x.split("|")[0].strip().split(" ")[4]
         )
 
-        # Add temporary Date column for merging gap info
-        df["Date"] = df["Date Opened"].dt.date
+    # Convert 'EntryTime' to datetime format
+    df["EntryTime"] = pd.to_datetime(df["EntryTime"])
 
-    else:  # BYOB BT data
-        # Convert 'EntryTime' to datetime format
-        df["EntryTime"] = pd.to_datetime(df["EntryTime"])
+    # Add Day of week column
+    df["Day of Week"] = df["EntryTime"].dt.day_name()
 
-        # Add Day of week column
-        df["Day of Week"] = df["EntryTime"].dt.day_name()
+    # Create a 'Time' column
+    df["Time"] = df["EntryTime"].dt.strftime("%H:%M:%S")
 
-        # Create a 'Time' column
-        df["Time"] = df["EntryTime"].dt.strftime("%H:%M:%S")
+    # Sort by 'EntryTime'
+    df.sort_values(["EntryTime"], inplace=True)
 
-        # Sort by 'EntryTime'
-        df.sort_values(["EntryTime"], inplace=True)
+    # Determine start and end dates
+    start_date = df["EntryTime"].min().date()
+    end_date = df["EntryTime"].max().date()
 
-        # Determine start and end dates
-        start_date = df["EntryTime"].min().date()
-        end_date = df["EntryTime"].max().date()
-
-        # Add temporary Date column for merging gap info
-        df["Date"] = df["EntryTime"].dt.date
+    # Add temporary Date column for merging gap info
+    df["Date"] = df["EntryTime"].dt.date
 
     # Get SPX historical open/close from yahoo finance and calc gaps
     spx_history = get_spx_gaps(start_date, end_date)
@@ -1627,7 +1658,11 @@ def walk_forward_test(
         occur on the given date and return True if negative expectancy
         """
         current_weekday = date.strftime("%a")
-        agg_type = "ME" if agg_type == "Monthly" else "W-SAT"
+        agg_type = (
+            "ME"
+            if agg_type == "Monthly"
+            else "SME" if agg_type == "Semi-Monthly" else "W-SAT"
+        )
         trade_log = tlog.copy()
         trade_log["EntryTime"] = pd.to_datetime(trade_log["EntryTime"])
         if is_BYOB_data(trade_log):
@@ -1644,7 +1679,11 @@ def walk_forward_test(
             window = (
                 max_long_avg_period
                 if agg_type == "ME"
-                else int(max_long_avg_period * 4.33)
+                else (
+                    int(max_long_avg_period * 2)
+                    if agg_type == "SME"
+                    else int(max_long_avg_period * 4.33)
+                )
             )
             rolling_avg_pnl = aggregated_pnl.rolling(
                 window=window, min_periods=1
@@ -1814,6 +1853,9 @@ def walk_forward_test(
             if settings["-AGG_TYPE-"] == "Monthly":
                 # date for best times should be the month prior as we don't know the future yet
                 best_time_date = current_date - relativedelta(months=1)
+            elif settings["-AGG_TYPE-"] == "Semi-Monthly":
+                # grab from last half-month
+                best_time_date = current_date - relativedelta(days=15)
             else:
                 # grab from last week
                 best_time_date = current_date - relativedelta(weeks=1)
@@ -2686,7 +2728,7 @@ def main():
                                 tooltip="Aggregate the results into monthly averages or weekly\nIf doing a walkforward test the top times will be updated at this frequency.",
                             ),
                             sg.Combo(
-                                ["Monthly", "Weekly"],
+                                ["Monthly", "Semi-Monthly", "Weekly"],
                                 app_settings["-AGG_TYPE-"],
                                 key="-AGG_TYPE-",
                                 tooltip="Aggregate the results into monthly averages or weekly\nIf doing a walkforward test the top times will be updated at this frequency.",
