@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.14.0"
+__version__ = "v.1.14.1"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1002,9 +1002,11 @@ def get_top_times(
                     (df_orig.index >= period_start) & (df_orig.index <= period_end), :
                 ]
             else:
-                df = df_orig.loc[
-                    df_orig.index == pd.Period(date_timestamp, freq=agg_type), :
-                ]
+                period = pd.Period(date_timestamp, freq=agg_type)
+                # df = df_orig.loc[df_orig.index == period, :]
+                # this change allows to select the next available period in case the
+                # current period is missing due to having some exclusions at that time.
+                df = df_orig.loc[df_orig.index <= period, :].head(1)
 
         if df.index.name != "Date Range":
             df.set_index("Date Range", inplace=True)
