@@ -10,3 +10,5 @@ tradelog analysis.py
 __pycache__
 Problem CSVs
 data
+.venv
+.vscode
