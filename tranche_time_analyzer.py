@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.14.1"
+__version__ = "v.1.14.2"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -591,9 +591,25 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
     into OO for backtesting and adding to OO portfolio
     """
     signal_data = []
-    is_byob = is_BYOB_data(trade_log_df)
     for _, trade in trade_log_df.iterrows():
-        if is_byob:
+        if "Legs" in trade and isinstance(trade["Legs"], str):
+            # OO data processing (unchanged)
+            legs = trade["Legs"].split("|")
+            for leg in legs:
+                leg_parts = leg.strip().split(" ")
+                signal_data.append(
+                    {
+                        "OPEN_DATETIME": trade["Date Opened"].strftime("%Y-%m-%d")
+                        + " "
+                        + trade["Time Opened"][:5],
+                        "BUY_SELL": "B" if leg_parts[5] == "BTO" else "S",
+                        "CALL_PUT": leg_parts[4],
+                        "STRIKE": leg_parts[3],
+                        "EXPIRATION": trade["Date Opened"].strftime("%Y-%m-%d"),
+                        "QUANTITY": int(leg_parts[0]) * trade["qty"],
+                    }
+                )
+        else:
             # BYOB data processing
             open_datetime = trade["EntryTime"].strftime("%Y-%m-%d %H:%M")
 
@@ -624,23 +640,6 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
                     "QUANTITY": trade["qty"],
                 }
             )
-        else:
-            # OO data processing (unchanged)
-            legs = trade["Legs"].split("|")
-            for leg in legs:
-                leg_parts = leg.strip().split(" ")
-                signal_data.append(
-                    {
-                        "OPEN_DATETIME": trade["Date Opened"].strftime("%Y-%m-%d")
-                        + " "
-                        + trade["Time Opened"][:5],
-                        "BUY_SELL": "B" if leg_parts[5] == "BTO" else "S",
-                        "CALL_PUT": leg_parts[4],
-                        "STRIKE": leg_parts[3],
-                        "EXPIRATION": trade["Date Opened"].strftime("%Y-%m-%d"),
-                        "QUANTITY": int(leg_parts[0]) * trade["qty"],
-                    }
-                )
 
     path = os.path.dirname(filename)
     basename = os.path.basename(filename)
