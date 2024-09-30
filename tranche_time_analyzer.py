@@ -6,9 +6,13 @@ import gc
 import os
 import json
 import platform
-import queue
+from loguru import logger
+
+# import queue
 import subprocess
-import threading
+
+# import threading
+from multiprocessing import Process, Queue, Event, freeze_support, Pool
 import uuid
 import webbrowser
 from io import BytesIO
@@ -61,8 +65,8 @@ image_aspect_ratio = 0.5
 
 
 # results queue for threads
-results_queue = queue.Queue()
-cancel_flag = threading.Event()
+results_queue = Queue()
+cancel_flag = Event()
 
 weekday_list = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 analysis_options = {
@@ -351,6 +355,7 @@ def create_excel_file(
     file,
     settings,
     open_files,
+    create_excel=True,
 ) -> dict:
     calc_type = settings["-CALC_TYPE-"]
     short_avg_period = settings["-AVG_PERIOD_1-"]
@@ -391,7 +396,7 @@ def create_excel_file(
             f" {end_date}.xlsx"
         ),
     )
-
+    filename = filename if create_excel else BytesIO()  # don't make the file
     # Create a Pandas Excel writer using XlsxWriter as the engine
     with pd.ExcelWriter(filename, engine="xlsxwriter") as writer:
 
@@ -1128,13 +1133,13 @@ def import_news_events(filename) -> bool:
     try:
         df = pd.read_csv(filename)
     except Exception as e:
-        return False
+        return
     if (
         "Start" not in df.columns
         or "Currency" not in df.columns
         or "Name" not in df.columns
     ):
-        return False
+        return
     df.drop_duplicates(inplace=True)
     df["Start"] = pd.to_datetime(df["Start"])
     df = df[df["Currency"] == "USD"]
@@ -1147,11 +1152,10 @@ def import_news_events(filename) -> bool:
             filtered_df = df[df["news_event"] == news_event]
             news_events[news_event] = sorted(filtered_df["Start"].dt.date.to_list())
 
-    return True
+    return news_events
 
 
-def find_and_import_news_events():
-    global news_events_loaded
+def find_and_import_news_events(results_queue: Queue):
     best_file = None
     max_rows = 0
     required_columns = set(["Id", "Start", "Name", "Impact", "Currency"])
@@ -1177,9 +1181,9 @@ def find_and_import_news_events():
 
     # If a valid file was found, import the news events
     if best_file:
-        success = import_news_events(best_file)
-        if success:
-            news_events_loaded = True
+        result = import_news_events(best_file)
+        if result:
+            results_queue.put(("-IMPORT_NEWS-", result))
             results_queue.put(
                 ("-IMPORT_NEWS-", "News event list found and loaded sucessuflly!")
             )
@@ -1307,6 +1311,27 @@ def load_data(
     )
 
 
+@with_gc
+def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings):
+    try:
+        cpu_count = os.cpu_count()
+    except Exception as e:
+        logger.exception("Error retirieving CPU count")
+        cpu_count = 2
+    q = Queue()  # local queue to intercept the results
+    run_analysis_threaded_kwargs = {
+        "files_list": files_list,
+        "results_queue": q,
+        "cancel_flag": cancel_flag,
+        "strategy_settings": strategy_settings,
+        "open_files": False,
+        "create_excel": False,
+    }
+    kwargs_list = [run_analysis_threaded_kwargs]
+    with Pool(processes=cpu_count) as pool:
+        results = pool.map(run_analysis_threaded, kwargs_list)
+
+
 def resize_image(image_path, size):
     """Resize the image to the specified size."""
     img = Image.open(image_path)
@@ -1344,6 +1369,9 @@ def run_analysis_threaded(
     files_list,
     strategy_settings,
     open_files,
+    results_queue: Queue,
+    cancel_flag,
+    create_excel=True,
 ):
     # initialize df_dicts
     df_dicts = {}
@@ -1355,7 +1383,7 @@ def run_analysis_threaded(
             else os.path.basename(file)
         )
         settings = strategy_settings[strategy]
-        result_dicts = create_excel_file(file, settings, open_files)
+        result_dicts = create_excel_file(file, settings, open_files, create_excel)
 
         # check for cancel flag to stop thread
         if cancel_flag.is_set():
@@ -1545,6 +1573,8 @@ def validate_strategy_settings(strategy_settings):
 
 @with_gc
 def walk_forward_test(
+    results_queue: Queue,
+    cancel_flag,
     df_dicts: dict,
     path: str,
     strategy_settings: dict,
@@ -2321,6 +2351,7 @@ def options_window(settings) -> None:
             if values["-FILE-"] and values["-FILE-"] != "Loaded":
                 result = import_news_events(values["-FILE-"])
                 if result:
+                    results_queue.put(("-IMPORT_NEWS-", result))
                     news_events_loaded = True
                     break
                 else:
@@ -2338,9 +2369,12 @@ def options_window(settings) -> None:
 
 
 def main():
+    global news_events_loaded, news_events
     # try to load news events if csv found
-    threading.Thread(target=find_and_import_news_events, daemon=True).start()
-
+    find_news_process = Process(
+        target=find_and_import_news_events, args=(results_queue,)
+    )
+    find_news_process.start()
     # load default settings or last used
     app_settings = {}
     settings_filename = os.path.join(os.path.curdir, "data", "tta_settings.json")
@@ -3029,14 +3063,17 @@ def main():
             window["-PROGRESS-"].update(visible=True)
             window["Analyze"].update("Working...", disabled=True)
             window["Cancel"].update(visible=True)
-            threading.Thread(
-                target=lambda: run_analysis_threaded(
+            run_analysis_process = Process(
+                target=run_analysis_threaded,
+                args=(
                     files_list,
                     strategy_settings,
                     values["-OPEN_FILES-"],
+                    results_queue,
+                    cancel_flag,
                 ),
-                daemon=True,
-            ).start()
+            )
+            run_analysis_process.start()
             test_running = True
 
             save_settings(app_settings, settings_filename, values)
@@ -3172,12 +3209,13 @@ def main():
 
         # check if thread is done
         while True:
-            try:
+            if not results_queue.empty():
                 result_key, results = results_queue.get(block=False)
-            except queue.Empty:
+            else:
                 break
 
             if result_key == "-RUN_ANALYSIS_END-":
+                run_analysis_process.join()
                 df_dicts = results
                 for right_type, day_dict in df_dicts.items():
                     for day, df_dict in day_dict.items():
@@ -3202,20 +3240,39 @@ def main():
                         os.path.dirname(files_list[0]), "data", "trade_logs"
                     )
                     os.makedirs(path, exist_ok=True)
-                    threading.Thread(
-                        target=lambda: walk_forward_test(
+                    wf_test_process = Process(
+                        target=walk_forward_test,
+                        args=(
+                            results_queue,
+                            cancel_flag,
                             df_dicts,
                             path,
                             strategy_settings,
-                            initial_value=float(values["-START_VALUE-"]),
-                            start=start_date,
-                            end=end_date,
-                            use_scaling=values["-SCALING-"],
-                            export_trades=values["-EXPORT-"],
-                            export_OO_sig=values["-EXPORT_OO_SIG-"],
                         ),
-                        daemon=True,
-                    ).start()
+                        kwargs={
+                            "initial_value": float(values["-START_VALUE-"]),
+                            "start": start_date,
+                            "end": end_date,
+                            "use_scaling": values["-SCALING-"],
+                            "export_trades": values["-EXPORT-"],
+                            "export_OO_sig": values["-EXPORT_OO_SIG-"],
+                        },
+                    )
+                    wf_test_process.start()
+                    # threading.Thread(
+                    #     target=lambda: walk_forward_test(
+                    #         df_dicts,
+                    #         path,
+                    #         strategy_settings,
+                    #         initial_value=float(values["-START_VALUE-"]),
+                    #         start=start_date,
+                    #         end=end_date,
+                    #         use_scaling=values["-SCALING-"],
+                    #         export_trades=values["-EXPORT-"],
+                    #         export_OO_sig=values["-EXPORT_OO_SIG-"],
+                    #     ),
+                    #     daemon=True,
+                    # ).start()
 
                 else:
                     window["-PROGRESS-"].update(visible=False)
@@ -3224,6 +3281,7 @@ def main():
                     test_running = False
 
             elif result_key == "-BACKTEST_END-":
+                wf_test_process.join()
                 window["-PROGRESS-"].update(visible=False)
                 window["Cancel"].update(visible=False)
                 window["Analyze"].update("Analyze", disabled=False)
@@ -3281,14 +3339,20 @@ def main():
                 continue
 
             elif result_key == "-BACKTEST_CANCELED-":
+                wf_test_process.join()
                 window["-PROGRESS-"].update(visible=False)
                 window["Cancel"].update("Cancel", disabled=False, visible=False)
                 window["Analyze"].update("Analyze", disabled=False)
                 test_running = False
 
             elif result_key == "-IMPORT_NEWS-":
-                sg.popup_no_border(results, auto_close=True, auto_close_duration=5)
-
+                if isinstance(results, str):
+                    if results.startswith("News"):
+                        news_events_loaded = True
+                    find_news_process.join()
+                    sg.popup_no_border(results, auto_close=True, auto_close_duration=5)
+                else:
+                    news_events = results
             elif result_key == "-ERROR-":
                 sg.popup_no_border(results)
         # move the progress bar
@@ -3301,4 +3365,5 @@ def main():
 
 
 if __name__ == "__main__":
+    freeze_support()
     main()
