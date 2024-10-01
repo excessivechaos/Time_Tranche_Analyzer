@@ -3,15 +3,13 @@ import ctypes
 import datetime as dt
 import functools
 import gc
-import os
+import os, sys
 import json
 import platform
 from loguru import logger
-
-# import queue
 import subprocess
-
-# import threading
+import time
+import threading
 from multiprocessing import Process, Queue, Event, freeze_support, Pool
 import uuid
 import webbrowser
@@ -28,6 +26,7 @@ from PIL import Image, ImageTk
 import yfinance as yf
 from CSV_merger import main as csv_merger_window
 import seaborn as sns
+import copy
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -163,7 +162,6 @@ def with_gc(func):
         return result
 
     return wrapper
-
 
 def analyze(
     df: pd.DataFrame,
@@ -350,6 +348,59 @@ def analyze(
         df_output_1mo_avg_combined,
     )
 
+def calc_metric(results: dict=None, metric: str=None):
+    """Calc a certain metric for a single strategy"""
+    df = list(results.values())[0]
+    # Calculate summary statistics for the strategy
+    final_value = df["Current Value"].iloc[-1]
+    max_dd = df["Max DD"].max()
+    if metric == "max_dd":
+        return max_dd
+    dd_days = df["DD Days"].max()
+    if metric == "dd_days":
+        return dd_days
+    initial_value = df["Initial Value"].min()
+    total_return = (final_value - initial_value) / initial_value
+    if metric == "total_return":
+        return total_return
+    # CAGR
+    start_dt = df["Date"].iloc[0]
+    end_dt = df["Date"].iloc[-1]
+    years = (end_dt - start_dt).days / 365.25
+    cagr = ((final_value / initial_value) ** (1 / years)) - 1
+    if metric == "cagr":
+        return cagr
+
+    # Sharpe Ratio
+    df["Daily Return"] = df["Current Value"].pct_change()
+    std_dev = df["Daily Return"].std()
+    risk_free_rate = 0.02 / 252  # Assume 2% annual risk-free rate, convert to daily
+    excess_returns = df["Daily Return"] - risk_free_rate
+    sharpe_ratio = np.sqrt(252) * excess_returns.mean() / std_dev  # Annualized
+    if metric == "sharpe_ratio":
+        return sharpe_ratio
+    if max_dd:
+        mar = cagr / max_dd
+    else:
+        mar = float("inf")
+    if metric == "mar":
+        return mar
+
+    # Group PnL by month
+    df["YearMonth"] = df["Date"].dt.to_period("M")
+    monthly_pnl = df.groupby("YearMonth")["Day PnL"].sum()
+
+    # Calculate largest and lowest monthly PnL with their corresponding dates
+    largest_monthly_pnl = monthly_pnl.max()
+    if metric == "largest_month":
+        return largest_monthly_pnl
+    lowest_monthly_pnl = monthly_pnl.min()
+    if metric == "lowest_month":
+        return lowest_monthly_pnl
+
+
+
+
 
 def create_excel_file(
     file,
@@ -440,7 +491,7 @@ def create_excel_file(
         for strat in df_dicts.copy():
             for day in days_sorted:
                 # check for cancel flag to stop thread
-                if cancel_flag.is_set():
+                if cancel_flag is not None and cancel_flag.is_set():
                     return
 
                 # filter for the weekday
@@ -486,12 +537,13 @@ def create_excel_file(
                     _filtered_df = pd.DataFrame(columns=df.columns)
                     if not gap_error:
                         gap_error = True  # only notify once
-                        results_queue.put(
-                            (
-                                "-ERROR-",
-                                "Gap data could not be loaded!\nAnalysis will continue without it.",
+                        if results_queue:
+                            results_queue.put(
+                                (
+                                    "-ERROR-",
+                                    "Gap data could not be loaded!\nAnalysis will continue without it.",
+                                )
                             )
-                        )
 
                 # run the analysis
                 if settings["-APPLY_EXCLUSIONS-"] != "Walk Forward Test":
@@ -582,12 +634,10 @@ def create_excel_file(
 
     return df_dicts
 
-
 def chunk_list(input_list, chunk_size=4):
     return [
         input_list[i : i + chunk_size] for i in range(0, len(input_list), chunk_size)
     ]
-
 
 def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
     """
@@ -657,7 +707,6 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
 
     return result_df
 
-
 def get_dpi_scale():
     try:
         user32 = ctypes.windll.user32
@@ -666,7 +715,6 @@ def get_dpi_scale():
         return dpi / 96.0  # 96 is the standard DPI
     except:
         return 1  # Default to no scaling if not on Windows or if there's an error
-
 
 def format_float(value):
     """This will remove decmal from float for GUI
@@ -679,7 +727,6 @@ def format_float(value):
         return value
     else:
         return str(value)
-
 
 @with_gc
 def get_correlation_matrix(results):
@@ -714,7 +761,6 @@ def get_correlation_matrix(results):
     plt.close()
 
     return img_str
-
 
 @with_gc
 def get_monthly_pnl_chart(results):
@@ -762,7 +808,6 @@ def get_monthly_pnl_chart(results):
     img_str = base64.b64encode(buf.getvalue())
     plt.close()
     return img_str
-
 
 @with_gc
 def get_pnl_plot(results):
@@ -850,7 +895,6 @@ def get_pnl_plot(results):
     plt.close()
     return table_data, img_str
 
-
 @with_gc
 def get_news_event_pnl_chart(results, sum=True):
     # Get list of news events
@@ -907,7 +951,6 @@ def get_news_event_pnl_chart(results, sum=True):
     plt.close()
     return img_str
 
-
 @with_gc
 def get_weekday_pnl_chart(results):
     # Filter weekdays based on exclusions
@@ -953,7 +996,6 @@ def get_weekday_pnl_chart(results):
     plt.close()
     return img_str
 
-
 def get_spx_gaps(start_date, end_date):
     start = start_date - dt.timedelta(
         10
@@ -964,7 +1006,6 @@ def get_spx_gaps(start_date, end_date):
     spx_history["Gap"] = spx_history["Open"] - spx_history["Close"].shift(1)
     spx_history["Gap%"] = spx_history["Gap"] / spx_history["Close"].shift(1) * 100
     return spx_history
-
 
 def get_top_times(
     df_dict, strategy_settings, date: dt.datetime.date = None, top_n_override=0
@@ -1062,7 +1103,6 @@ def get_top_times(
 
     return result_df
 
-
 def import_news_events(filename) -> bool:
     global news_events
     """
@@ -1154,7 +1194,6 @@ def import_news_events(filename) -> bool:
 
     return news_events
 
-
 def find_and_import_news_events(results_queue: Queue):
     best_file = None
     max_rows = 0
@@ -1195,7 +1234,6 @@ def find_and_import_news_events(results_queue: Queue):
         )
     )
 
-
 def get_next_filename(path: str, base: str, ext: str) -> str:
     """
     Takes a path, base name, and extension.
@@ -1210,10 +1248,8 @@ def get_next_filename(path: str, base: str, ext: str) -> str:
         counter += 1
     return filename
 
-
 def is_BYOB_data(df: pd.DataFrame) -> bool:
     return df.columns[0] == "TradeID"
-
 
 def load_data(
     file: str,
@@ -1310,27 +1346,69 @@ def load_data(
         end_date,
     )
 
+def run_analysis_wrapper(kwargs):
+    return run_analysis_threaded(**kwargs)
+
+def wf_test_wrapper(kwargs):
+    return walk_forward_test(**kwargs)
+
+def calc_metric_wrapper(kwargs):
+    return calc_metric(**kwargs)
 
 @with_gc
-def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings):
+def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, **kwargs):
+    setup_logging("ERROR")
     try:
-        cpu_count = os.cpu_count()
+        try:
+            cpu_count = os.cpu_count()
+        except Exception as e:
+            logger.exception("Error retirieving CPU count")
+            cpu_count = 2
+        
+        with Pool(processes=cpu_count) as pool:
+            strat_settings = {os.path.basename(files_list[0]): copy.deepcopy(strategy_settings["-SINGLE_MODE-"])}
+            run_analysis_kwargs_list = []
+            for x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+                settings = copy.deepcopy(strat_settings)
+                settings["-AVG_PERIOD_1-"] = x
+                run_analysis_threaded_kwargs = {
+                    "files_list": files_list,
+                    "results_queue": None,
+                    "cancel_flag": None,
+                    "strategy_settings": settings,
+                    "open_files": False,
+                    "create_excel": False,
+                }
+                run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
+            analysis_results = pool.map(run_analysis_wrapper, run_analysis_kwargs_list)
+            for result in analysis_results:
+                if isinstance(result, Exception):
+                    raise result
+            logger.debug(f"analysis results: {len(analysis_results)}")
+            wf_test_kwargs_list = []
+            for i in range(len(run_analysis_kwargs_list)):
+                wf_test_kwargs = {
+                    "results_queue": None,
+                    "cancel_flag": None,
+                    "df_dicts": analysis_results[i],
+                    "path": "",
+                    "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"],
+                    "use_scaling": True,
+                }
+                wf_test_kwargs_list.append(wf_test_kwargs)
+            wf_test_results = pool.map(wf_test_wrapper, wf_test_kwargs_list)
+            for result in wf_test_results:
+                if isinstance(result, Exception):
+                    raise result
+            logger.debug(f"wf test results: {len(wf_test_results)}")
+            calc_metric_kwargs_list = [{'results': wf_test_results[i], 'metric': "mar"} for i in range(len(wf_test_results))]
+            calc_metric_results = pool.map(calc_metric_wrapper, calc_metric_kwargs_list)
+            final_results = [{"metric":calc_metric_results[i], "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"]} for i in range(len(run_analysis_kwargs_list))]
+            best = sorted(final_results, key=lambda x: x["metric"], reverse=True)[0]
+            logger.debug(best)
     except Exception as e:
-        logger.exception("Error retirieving CPU count")
-        cpu_count = 2
-    q = Queue()  # local queue to intercept the results
-    run_analysis_threaded_kwargs = {
-        "files_list": files_list,
-        "results_queue": q,
-        "cancel_flag": cancel_flag,
-        "strategy_settings": strategy_settings,
-        "open_files": False,
-        "create_excel": False,
-    }
-    kwargs_list = [run_analysis_threaded_kwargs]
-    with Pool(processes=cpu_count) as pool:
-        results = pool.map(run_analysis_threaded, kwargs_list)
-
+        results_queue.put(("-RUN_ANALYSIS_END-", e))
+        logger.exception("Error in optimizer")
 
 def resize_image(image_path, size):
     """Resize the image to the specified size."""
@@ -1339,7 +1417,6 @@ def resize_image(image_path, size):
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
-
 
 def resize_base64_image(base64_image, desired_height):
     # Decode the base64 string
@@ -1363,84 +1440,90 @@ def resize_base64_image(base64_image, desired_height):
     # Encode the resized image to base64
     return base64.b64encode(buf.getvalue())
 
-
 @with_gc
 def run_analysis_threaded(
-    files_list,
-    strategy_settings,
-    open_files,
-    results_queue: Queue,
-    cancel_flag,
+    files_list="",
+    strategy_settings={},
+    open_files=False,
+    results_queue: Queue=None,
+    cancel_flag: Event=None, # type: ignore
     create_excel=True,
 ):
-    # initialize df_dicts
-    df_dicts = {}
+    setup_logging("ERROR")
+    try:
+        # initialize df_dicts
+        df_dicts = {}
 
-    for file in files_list:
-        strategy = (
-            "-SINGLE_MODE-"
-            if "-SINGLE_MODE-" in strategy_settings
-            else os.path.basename(file)
-        )
-        settings = strategy_settings[strategy]
-        result_dicts = create_excel_file(file, settings, open_files, create_excel)
+        for file in files_list:
+            strategy = (
+                "-SINGLE_MODE-"
+                if "-SINGLE_MODE-" in strategy_settings
+                else os.path.basename(file)
+            )
+            settings = strategy_settings[strategy]
+            result_dicts = create_excel_file(file, settings, open_files, create_excel)
 
-        # check for cancel flag to stop thread
-        if cancel_flag.is_set():
-            cancel_flag.clear()
-            results_queue.put(("-BACKTEST_CANCELED-", ""))
-            return
+            # check for cancel flag to stop thread
+            if cancel_flag is not None and cancel_flag.is_set():
+                cancel_flag.clear()
+                if results_queue:
+                    results_queue.put(("-BACKTEST_CANCELED-", "-RUN_ANALYSIS-"))
+                return
 
-        source = os.path.splitext(os.path.basename(file))[0]
-        for right_type, day_dict in result_dicts.items():
-            if right_type not in df_dicts:
-                df_dicts[right_type] = {
-                    "All": {},
-                    "Mon": {},
-                    "Tue": {},
-                    "Wed": {},
-                    "Thu": {},
-                    "Fri": {},
-                }
-            for day, df_dict in day_dict.items():
-                df_dicts[right_type][day][source] = df_dict
+            source = os.path.splitext(os.path.basename(file))[0]
+            for right_type, day_dict in result_dicts.items():
+                if right_type not in df_dicts:
+                    df_dicts[right_type] = {
+                        "All": {},
+                        "Mon": {},
+                        "Tue": {},
+                        "Wed": {},
+                        "Thu": {},
+                        "Fri": {},
+                    }
+                for day, df_dict in day_dict.items():
+                    df_dicts[right_type][day][source] = df_dict
 
-    for _best in ["Best P/C", "Best P/C Gap Up", "Best P/C Gap Down"]:
-        df_dicts[_best] = {
-            "All": {},
-            "Mon": {},
-            "Tue": {},
-            "Wed": {},
-            "Thu": {},
-            "Fri": {},
-        }
+        for _best in ["Best P/C", "Best P/C Gap Up", "Best P/C Gap Down"]:
+            df_dicts[_best] = {
+                "All": {},
+                "Mon": {},
+                "Tue": {},
+                "Wed": {},
+                "Thu": {},
+                "Fri": {},
+            }
 
-        # combine the put and call dfs into 1 dict for dertmining the best time
-        # from among both individual datasets
-        for _right in ["Puts", "Calls"]:
-            if _best.endswith("Gap Up"):
-                _right += " Gap Up"
-            elif _best.endswith("Gap Down"):
-                _right += " Gap Down"
+            # combine the put and call dfs into 1 dict for dertmining the best time
+            # from among both individual datasets
+            for _right in ["Puts", "Calls"]:
+                if _best.endswith("Gap Up"):
+                    _right += " Gap Up"
+                elif _best.endswith("Gap Down"):
+                    _right += " Gap Down"
 
-            if _right in df_dicts:
-                for _day, _day_dict in df_dicts[_right].items():
-                    for _source, _df_dict in _day_dict.items():
-                        df_dicts[_best][_day][
-                            f"{_right.removesuffix("s")}||{_source}"
-                        ] = _df_dict
-
-    results_queue.put(("-RUN_ANALYSIS_END-", df_dicts))
-    return df_dicts
-
-
+                if _right in df_dicts:
+                    for _day, _day_dict in df_dicts[_right].items():
+                        for _source, _df_dict in _day_dict.items():
+                            df_dicts[_best][_day][
+                                f"{_right.removesuffix("s")}||{_source}"
+                            ] = _df_dict
+        if results_queue:
+            results_queue.put(("-RUN_ANALYSIS_END-", df_dicts))
+        return df_dicts
+    except Exception as e:
+        if results_queue:
+            results_queue.put(("-RUN_ANALYSIS_END-", e))
+        else:
+            return e
+        logger.exception("Error in run_analysis_threaded")
+        
 def save_settings(settings, settings_filename, values):
     for key in settings:
         settings[key] = values[key]
     os.makedirs(os.path.dirname(settings_filename), exist_ok=True)
     with open(settings_filename, "w") as f:
         json.dump(settings, f, indent=4)
-
 
 def set_default_app_settings(app_settings):
     # Setup defaults if setting did not load/exist
@@ -1487,7 +1570,32 @@ def set_default_app_settings(app_settings):
     if "-TOP_TIME_THRESHOLD-" not in app_settings:
         app_settings["-TOP_TIME_THRESHOLD-"] = ""
 
+def setup_logging(log_level):
+    """
+    sets up the logging, adds the sinks to loguru
+    Can be called later to change the log level
+    """
+    log_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [<cyan>{name:^17.17s}</cyan>]"
+        " [<level>{level:^7}</level>] {message}"
+    )
+    logger.remove()
+    if sys.stderr:
+        logger.add(sys.stderr, level='DEBUG', format=log_format)
 
+    # Get the directory of the current script
+    if getattr(sys, "frozen", False):
+        # The application is running in a bundle (PyInstaller)
+        current_dir = os.path.dirname(sys.executable)
+    else:
+        # The application is running in a normal Python environment
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+    # Create a 'data' directory if it doesn't exist
+    log_dir = os.path.join(current_dir, "data")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "TTA.log")
+    logger.add(log_path, rotation="10 MB", retention=1, format=log_format, level=log_level)
+  
 def update_strategy_settings(values, settings):
     settings.update(
         {
@@ -1524,7 +1632,6 @@ def update_strategy_settings(values, settings):
         settings["-GAP_THRESHOLD-"] = 0
     if "-GAP_TYPE-" not in settings:
         settings["-GAP_TYPE-"] = "%"
-
 
 def validate_strategy_settings(strategy_settings):
     for strategy in strategy_settings:
@@ -1570,14 +1677,13 @@ def validate_strategy_settings(strategy_settings):
 
     return True
 
-
 @with_gc
 def walk_forward_test(
-    results_queue: Queue,
-    cancel_flag,
-    df_dicts: dict,
-    path: str,
-    strategy_settings: dict,
+    results_queue: Queue=None,
+    cancel_flag=None,
+    df_dicts: dict=None,
+    path: str=None,
+    strategy_settings: dict=None,
     start: dt.datetime.date = None,
     end: dt.datetime.date = None,
     initial_value: float = 100_000,
@@ -1585,545 +1691,551 @@ def walk_forward_test(
     export_trades=False,
     export_OO_sig=False,
 ):
-    portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
-    start_date = dt.date.min
-    passthrough_start_date = dt.date.min
-    end_date = dt.date.max
-    # loop through all the source dfs
-    for source, df_dict in df_dicts["Put-Call Comb"]["All"].items():
-        try:
-            passthrough = strategy_settings[f"{source}.csv"]["-PASSTHROUGH_MODE-"]
-        except KeyError as e:
-            passthrough = False
+    setup_logging("ERROR")
+    try:
+        portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
+        start_date = dt.date.min
+        passthrough_start_date = dt.date.min
+        end_date = dt.date.max
+        # loop through all the source dfs
+        for source, df_dict in df_dicts["Put-Call Comb"]["All"].items():
+            try:
+                passthrough = strategy_settings[f"{source}.csv"]["-PASSTHROUGH_MODE-"]
+            except KeyError as e:
+                passthrough = False
 
-        _start_date = df_dict["org_df"]["EntryTime"].min().date()
-        _end_date = df_dict["org_df"]["EntryTime"].max().date()
-        # find the latest start date
-        if not passthrough:
-            if _start_date > start_date:
-                start_date = _start_date
-        else:
-            # we need to treat passthrough seperate since there is no
-            # warm up period necessary.
-            if _start_date > passthrough_start_date:
-                passthrough_start_date = _start_date
-
-        # find the earliest end date passthrough doesn't matter here
-        if _end_date < end_date:
-            end_date = _end_date
-
-    max_long_avg_period = max(
-        [
-            max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"])
-            for settings in strategy_settings.values()
-        ]
-    )
-    date_adv = start_date + relativedelta(months=max_long_avg_period)
-    warm_start = dt.date(date_adv.year, date_adv.month, 1)
-    # use either the user input date or the first warmed up date
-    if start:
-        start_test_date = max(warm_start, start)
-    else:
-        start_test_date = warm_start
-    end = end_date if end is None else end
-
-    # check if any strats are using auto exclusion
-    warm_up_date = start_test_date
-    using_auto_exclusions = False
-    for setting in strategy_settings.values():
-        if setting["-AUTO_EXCLUSIONS-"]:
-            # set the warmup date
-            warm_up_date = warm_start + relativedelta(months=max_long_avg_period)
-            using_auto_exclusions = True
-            break
-    # now we just need to see if the passthrough strats start later
-    warm_up_date = max(warm_up_date, passthrough_start_date)
-
-    if not portfolio_mode:
-        settings = strategy_settings["-SINGLE_MODE-"]
-        strats = ["All-P_C_Comb"]
-        if settings["-PUT_OR_CALL-"] and settings["-IDV_WEEKDAY-"]:
-            strats += ["Weekday-P_C_Comb", "All-Best_P_or_C", "Weekday-Best_P_or_C"]
-        elif settings["-IDV_WEEKDAY-"]:
-            strats.append("Weekday-P_C_Comb")
-        elif settings["-PUT_OR_CALL-"]:
-            strats.append("All-Best_P_or_C")
-        if settings["-GAP_ANALYSIS-"]:
-            for _strat in strats.copy():
-                strats.append(f"{_strat}-Gap")
-    else:
-        strats = ["Portfolio"] + list(strategy_settings.keys())
-
-    portfolio_metrics = {}
-    for _strat in strats:
-        portfolio_metrics[_strat] = {
-            "Current Value": initial_value,
-            "Highest Value": initial_value,
-            "Max DD": 0.0,
-            "Current DD": 0.0,
-            "DD Days": 0,
-            "Tranche Qtys": [],
-            "Port Tranche Qtys": [],
-            "Num Tranches": 1,
-            "Port Num Tranches": 1,
-            "trade log": pd.DataFrame(),
-            "Tlog Auto Exclusions": pd.DataFrame(),  # for warm-up to calc EV for auto exclusions
-            "Win Streak": 0,
-            "Loss Streak": 0,
-        }
-
-    if portfolio_mode:
-        port_dict = portfolio_metrics["Portfolio"]
-
-    # init results
-    results = {}
-    for strategy in portfolio_metrics:
-        results[strategy] = pd.DataFrame()
-
-    # convert weekdays from full day name to short name. i.e. Monday to Mon
-    day_list = [_day[:3] for _day in weekday_list]
-
-    def determine_auto_skip(date: dt.date, tlog: pd.DataFrame, agg_type: str) -> bool:
-        """
-        Calculate the expected value of any news events that
-        occur on the given date and return True if negative expectancy
-        """
-        current_weekday = date.strftime("%a")
-        agg_type = (
-            "ME"
-            if agg_type == "Monthly"
-            else "SME" if agg_type == "Semi-Monthly" else "W-SAT"
-        )
-        trade_log = tlog.copy()
-        trade_log["EntryTime"] = pd.to_datetime(trade_log["EntryTime"])
-        if is_BYOB_data(trade_log):
-            trade_log["P/L"] = (
-                trade_log["ProfitLossAfterSlippage"] * 100 - trade_log["CommissionFees"]
-            )
-
-        def _get_current_rolling_avg(df):
-            # Set 'EntryTime' as the index
-            df = df.set_index("EntryTime")
-            # Resample to monthly or weekly frequency, summing the PNL
-            aggregated_pnl = df["P/L"].resample(agg_type).sum()
-            # Calculate the rolling average
-            window = (
-                max_long_avg_period
-                if agg_type == "ME"
-                else (
-                    int(max_long_avg_period * 2)
-                    if agg_type == "SME"
-                    else int(max_long_avg_period * 4.33)
-                )
-            )
-            rolling_avg_pnl = aggregated_pnl.rolling(
-                window=window, min_periods=1
-            ).mean()
-            if not rolling_avg_pnl.empty:
-                return rolling_avg_pnl.iloc[-1]
+            _start_date = df_dict["org_df"]["EntryTime"].min().date()
+            _end_date = df_dict["org_df"]["EntryTime"].max().date()
+            # find the latest start date
+            if not passthrough:
+                if _start_date > start_date:
+                    start_date = _start_date
             else:
-                return 0
+                # we need to treat passthrough seperate since there is no
+                # warm up period necessary.
+                if _start_date > passthrough_start_date:
+                    passthrough_start_date = _start_date
 
-        # find the events that occur on this date and calc the expectancy
-        for event, date_list in news_events.items():
-            if date in date_list:
-                trade_log_filtered = trade_log[
-                    trade_log["EntryTime"].dt.date.isin(date_list)
-                ]
-                if not trade_log_filtered.empty:
-                    current_avg = _get_current_rolling_avg(trade_log_filtered)
-                    if current_avg < 0:
-                        # this event has negative expectancy, whole day can be skipped
-                        return True
+            # find the earliest end date passthrough doesn't matter here
+            if _end_date < end_date:
+                end_date = _end_date
 
-        # passed all news events, lets see if we skip the weekday
-        trade_log_filtered = trade_log[
-            trade_log["Day of Week"].str.contains(current_weekday)
-        ]
-        if not trade_log_filtered.empty:
-            current_avg = _get_current_rolling_avg(trade_log_filtered)
-            if current_avg < 0:
-                # this dat has negative expectancy, whole day can be skipped
-                return True
-        return False
+        max_long_avg_period = max(
+            [
+                max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"])
+                for settings in strategy_settings.values()
+            ]
+        )
+        date_adv = start_date + relativedelta(months=max_long_avg_period)
+        warm_start = dt.date(date_adv.year, date_adv.month, 1)
+        # use either the user input date or the first warmed up date
+        if start:
+            start_test_date = max(warm_start, start)
+        else:
+            start_test_date = warm_start
+        end = end_date if end is None else end
 
-    if using_auto_exclusions:
-        current_date = warm_start
-    else:
-        current_date = max(start_test_date, passthrough_start_date)
+        # check if any strats are using auto exclusion
+        warm_up_date = start_test_date
+        using_auto_exclusions = False
+        for setting in strategy_settings.values():
+            if setting["-AUTO_EXCLUSIONS-"]:
+                # set the warmup date
+                warm_up_date = warm_start + relativedelta(months=max_long_avg_period)
+                using_auto_exclusions = True
+                break
+        # now we just need to see if the passthrough strats start later
+        warm_up_date = max(warm_up_date, passthrough_start_date)
 
-    # determine if we need to use gaps
-    spx_history = pd.DataFrame()
-    for setting in strategy_settings.values():
-        if setting["-GAP_ANALYSIS-"]:
-            spx_history = get_spx_gaps(current_date, end)
-            if not spx_history.empty:
-                # reset the index to just the date, dropping the time component
-                spx_history = spx_history.reset_index()
-                spx_history["Date"] = spx_history["Date"].dt.date
-                spx_history = spx_history.set_index("Date")
+        if not portfolio_mode:
+            settings = strategy_settings["-SINGLE_MODE-"]
+            strats = ["All-P_C_Comb"]
+            if settings["-PUT_OR_CALL-"] and settings["-IDV_WEEKDAY-"]:
+                strats += ["Weekday-P_C_Comb", "All-Best_P_or_C", "Weekday-Best_P_or_C"]
+            elif settings["-IDV_WEEKDAY-"]:
+                strats.append("Weekday-P_C_Comb")
+            elif settings["-PUT_OR_CALL-"]:
+                strats.append("All-Best_P_or_C")
+            if settings["-GAP_ANALYSIS-"]:
+                for _strat in strats.copy():
+                    strats.append(f"{_strat}-Gap")
+        else:
+            strats = ["Portfolio"] + list(strategy_settings.keys())
 
-    while current_date <= end:
-        # check for cancel flag to stop thread
-        if cancel_flag.is_set():
-            cancel_flag.clear()
-            results_queue.put(("-BACKTEST_CANCELED-", ""))
-            return
-
-        warmed_up = current_date >= warm_up_date
+        portfolio_metrics = {}
+        for _strat in strats:
+            portfolio_metrics[_strat] = {
+                "Current Value": initial_value,
+                "Highest Value": initial_value,
+                "Max DD": 0.0,
+                "Current DD": 0.0,
+                "DD Days": 0,
+                "Tranche Qtys": [],
+                "Port Tranche Qtys": [],
+                "Num Tranches": 1,
+                "Port Num Tranches": 1,
+                "trade log": pd.DataFrame(),
+                "Tlog Auto Exclusions": pd.DataFrame(),  # for warm-up to calc EV for auto exclusions
+                "Win Streak": 0,
+                "Loss Streak": 0,
+            }
 
         if portfolio_mode:
-            # reset daily pnl for portfolio
-            port_dict["Current Day PnL"] = 0
+            port_dict = portfolio_metrics["Portfolio"]
 
-        current_weekday = current_date.strftime("%a")
-        for strat, strat_dict in portfolio_metrics.items():
-            if portfolio_mode and strat == "Portfolio":
-                # we don't trade the portfolio, it is just the combination of all individual strats
-                continue
-            elif portfolio_mode:
-                settings = strategy_settings[strat]
-            else:
-                settings = strategy_settings["-SINGLE_MODE-"]
+        # init results
+        results = {}
+        for strategy in portfolio_metrics:
+            results[strategy] = pd.DataFrame()
 
-            # reset daily pnl for individual strategy
-            strat_dict["Current Day PnL"] = 0
+        # convert weekdays from full day name to short name. i.e. Monday to Mon
+        day_list = [_day[:3] for _day in weekday_list]
 
-            day_exlusions = []
-            news_date_exclusions = []
-            if settings["-APPLY_EXCLUSIONS-"] != "Analysis":
-                # we are applying exclusions to either the WF test or both the WF and Analysis
-                day_exlusions = [_day[:3] for _day in settings["-WEEKDAY_EXCLUSIONS-"]]
-                # get list of news event dates to skip.
-                for release, date_list in news_events.items():
-                    if release in settings["-NEWS_EXCLUSIONS-"]:
-                        news_date_exclusions += date_list
-
-            skip_day = False
-            if warmed_up and using_auto_exclusions:
-                skip_day = determine_auto_skip(
-                    current_date,
-                    strat_dict["Tlog Auto Exclusions"],
-                    settings["-AGG_TYPE-"],
+        def determine_auto_skip(date: dt.date, tlog: pd.DataFrame, agg_type: str) -> bool:
+            """
+            Calculate the expected value of any news events that
+            occur on the given date and return True if negative expectancy
+            """
+            current_weekday = date.strftime("%a")
+            agg_type = (
+                "ME"
+                if agg_type == "Monthly"
+                else "SME" if agg_type == "Semi-Monthly" else "W-SAT"
+            )
+            trade_log = tlog.copy()
+            trade_log["EntryTime"] = pd.to_datetime(trade_log["EntryTime"])
+            if is_BYOB_data(trade_log):
+                trade_log["P/L"] = (
+                    trade_log["ProfitLossAfterSlippage"] * 100 - trade_log["CommissionFees"]
                 )
-            elif (
-                current_weekday in day_exlusions
-                or current_weekday not in day_list
-                or current_date in news_date_exclusions
-            ):
-                skip_day = True
 
-            if not settings["-PASSTHROUGH_MODE-"]:
-                if use_scaling:
+            def _get_current_rolling_avg(df):
+                # Set 'EntryTime' as the index
+                df = df.set_index("EntryTime")
+                # Resample to monthly or weekly frequency, summing the PNL
+                aggregated_pnl = df["P/L"].resample(agg_type).sum()
+                # Calculate the rolling average
+                window = (
+                    max_long_avg_period
+                    if agg_type == "ME"
+                    else (
+                        int(max_long_avg_period * 2)
+                        if agg_type == "SME"
+                        else int(max_long_avg_period * 4.33)
+                    )
+                )
+                rolling_avg_pnl = aggregated_pnl.rolling(
+                    window=window, min_periods=1
+                ).mean()
+                if not rolling_avg_pnl.empty:
+                    return rolling_avg_pnl.iloc[-1]
+                else:
+                    return 0
 
-                    def determine_num_tranches(
-                        min_tranches, max_tranches, num_contracts
-                    ):
-                        tranches = max_tranches
-                        while True:
-                            if num_contracts > tranches:
-                                max_tranche_qty = int(num_contracts / tranches)
-                                remain_qty = num_contracts - (
-                                    tranches * max_tranche_qty
-                                )
-                                if remain_qty >= min_tranches or remain_qty == 0:
-                                    # we're done we can stay at this number of tranches with
-                                    # the remainder filling up another set of at least min tranches
-                                    return tranches
-                                else:
-                                    # we need to take a tranche away so we can try to fill up at
-                                    # least 1 full set at min amount
-                                    if tranches - 1 < min_tranches:
-                                        # we can't reduce any further, got with what we have
-                                        # even if that means we will be adding contracts below the min
+            # find the events that occur on this date and calc the expectancy
+            for event, date_list in news_events.items():
+                if date in date_list:
+                    trade_log_filtered = trade_log[
+                        trade_log["EntryTime"].dt.date.isin(date_list)
+                    ]
+                    if not trade_log_filtered.empty:
+                        current_avg = _get_current_rolling_avg(trade_log_filtered)
+                        if current_avg < 0:
+                            # this event has negative expectancy, whole day can be skipped
+                            return True
+
+            # passed all news events, lets see if we skip the weekday
+            trade_log_filtered = trade_log[
+                trade_log["Day of Week"].str.contains(current_weekday)
+            ]
+            if not trade_log_filtered.empty:
+                current_avg = _get_current_rolling_avg(trade_log_filtered)
+                if current_avg < 0:
+                    # this dat has negative expectancy, whole day can be skipped
+                    return True
+            return False
+
+        if using_auto_exclusions:
+            current_date = warm_start
+        else:
+            current_date = max(start_test_date, passthrough_start_date)
+
+        # determine if we need to use gaps
+        spx_history = pd.DataFrame()
+        for setting in strategy_settings.values():
+            if setting["-GAP_ANALYSIS-"]:
+                spx_history = get_spx_gaps(current_date, end)
+                if not spx_history.empty:
+                    # reset the index to just the date, dropping the time component
+                    spx_history = spx_history.reset_index()
+                    spx_history["Date"] = spx_history["Date"].dt.date
+                    spx_history = spx_history.set_index("Date")
+
+        while current_date <= end:
+            # check for cancel flag to stop thread
+            if cancel_flag is not None and cancel_flag.is_set():
+                cancel_flag.clear()
+                results_queue.put(("-BACKTEST_CANCELED-", "-WALK_FORWARD_TEST-"))
+                return
+
+            warmed_up = current_date >= warm_up_date
+
+            if portfolio_mode:
+                # reset daily pnl for portfolio
+                port_dict["Current Day PnL"] = 0
+
+            current_weekday = current_date.strftime("%a")
+            for strat, strat_dict in portfolio_metrics.items():
+                if portfolio_mode and strat == "Portfolio":
+                    # we don't trade the portfolio, it is just the combination of all individual strats
+                    continue
+                elif portfolio_mode:
+                    settings = strategy_settings[strat]
+                else:
+                    settings = strategy_settings["-SINGLE_MODE-"]
+
+                # reset daily pnl for individual strategy
+                strat_dict["Current Day PnL"] = 0
+
+                day_exlusions = []
+                news_date_exclusions = []
+                if settings["-APPLY_EXCLUSIONS-"] != "Analysis":
+                    # we are applying exclusions to either the WF test or both the WF and Analysis
+                    day_exlusions = [_day[:3] for _day in settings["-WEEKDAY_EXCLUSIONS-"]]
+                    # get list of news event dates to skip.
+                    for release, date_list in news_events.items():
+                        if release in settings["-NEWS_EXCLUSIONS-"]:
+                            news_date_exclusions += date_list
+
+                skip_day = False
+                if warmed_up and using_auto_exclusions:
+                    skip_day = determine_auto_skip(
+                        current_date,
+                        strat_dict["Tlog Auto Exclusions"],
+                        settings["-AGG_TYPE-"],
+                    )
+                elif (
+                    current_weekday in day_exlusions
+                    or current_weekday not in day_list
+                    or current_date in news_date_exclusions
+                ):
+                    skip_day = True
+
+                if not settings["-PASSTHROUGH_MODE-"]:
+                    if use_scaling:
+
+                        def determine_num_tranches(
+                            min_tranches, max_tranches, num_contracts
+                        ):
+                            tranches = max_tranches
+                            while True:
+                                if num_contracts > tranches:
+                                    max_tranche_qty = int(num_contracts / tranches)
+                                    remain_qty = num_contracts - (
+                                        tranches * max_tranche_qty
+                                    )
+                                    if remain_qty >= min_tranches or remain_qty == 0:
+                                        # we're done we can stay at this number of tranches with
+                                        # the remainder filling up another set of at least min tranches
                                         return tranches
                                     else:
-                                        tranches -= 1
-                            else:
-                                return num_contracts
+                                        # we need to take a tranche away so we can try to fill up at
+                                        # least 1 full set at min amount
+                                        if tranches - 1 < min_tranches:
+                                            # we can't reduce any further, got with what we have
+                                            # even if that means we will be adding contracts below the min
+                                            return tranches
+                                        else:
+                                            tranches -= 1
+                                else:
+                                    return num_contracts
 
-                    def determine_tranche_qtys(tranches):
-                        tranche_qtys = []
-                        for x in range(tranches):
-                            if x < num_contracts % tranches:
-                                # this is where we add the remaining contracts after filling up all tranches
-                                tranche_qtys.append(int(num_contracts / tranches) + 1)
-                            else:
-                                tranche_qtys.append(int(num_contracts / tranches))
-                        return tranche_qtys
+                        def determine_tranche_qtys(tranches):
+                            tranche_qtys = []
+                            for x in range(tranches):
+                                if x < num_contracts % tranches:
+                                    # this is where we add the remaining contracts after filling up all tranches
+                                    tranche_qtys.append(int(num_contracts / tranches) + 1)
+                                else:
+                                    tranche_qtys.append(int(num_contracts / tranches))
+                            return tranche_qtys
 
-                    min_tranches = settings["-MIN_TRANCHES-"]
-                    max_tranches = settings["-MAX_TRANCHES-"]
-                    bp_per_contract = settings["-BP_PER-"]
-                    num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
-                    tranches = determine_num_tranches(
-                        min_tranches, max_tranches, num_contracts
-                    )
-                    strat_dict["Num Tranches"] = tranches
-                    strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
-                    if portfolio_mode:
-                        weighted_value = (
-                            port_dict["Current Value"] * settings["-PORT_WEIGHT-"] / 100
-                        )
-                        num_contracts = int(weighted_value / bp_per_contract)
+                        min_tranches = settings["-MIN_TRANCHES-"]
+                        max_tranches = settings["-MAX_TRANCHES-"]
+                        bp_per_contract = settings["-BP_PER-"]
+                        num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
                         tranches = determine_num_tranches(
                             min_tranches, max_tranches, num_contracts
                         )
-                        strat_dict["Port Num Tranches"] = tranches
-                        strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(
-                            tranches
-                        )
-                else:
-                    # not scaling
-                    num_contracts = settings["-TOP_X-"]
-                    strat_dict["Num Tranches"] = num_contracts
-                    strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
-                    strat_dict["Port Num Tranches"] = num_contracts
-                    strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
-
-            if settings["-AGG_TYPE-"] == "Monthly":
-                # date for best times should be the month prior as we don't know the future yet
-                best_time_date = current_date - relativedelta(months=1)
-            elif settings["-AGG_TYPE-"] == "Semi-Monthly":
-                # grab from last half-month
-                best_time_date = current_date - relativedelta(days=15)
-            else:
-                # grab from last week
-                best_time_date = current_date - relativedelta(weeks=1)
-
-            def log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys):
-                # determine gap info
-                gap_str = ""
-                if settings["-GAP_ANALYSIS-"]:
-                    _gap_type = "Gap%" if settings["-GAP_TYPE-"] == "%" else "Gap"
-                    try:
-                        gap_value = spx_history.at[current_date, _gap_type]
-                    except KeyError as e:
-                        # probably a day market was not open (i.e. holiday)
-                        gap_value = 0
-                    if gap_value > settings["-GAP_THRESHOLD-"]:
-                        gap_str = " Gap Up"
-                    elif gap_value < -settings["-GAP_THRESHOLD-"]:
-                        gap_str = " Gap Down"
-
-                if portfolio_mode:
-                    # determine which strat to use
-                    if settings["-PUT_OR_CALL-"]:
-                        _strat = "Best P/C"
-                    else:
-                        _strat = "Put-Call Comb"
-
-                    _strat = _strat + gap_str  # add gap info onto the end of strat name
-
-                    # determine which weekday to use
-                    if settings["-IDV_WEEKDAY-"]:
-                        _weekday = current_weekday
-                    else:
-                        _weekday = "All"
-
-                else:
-                    # determine strat name for df_dicts
-                    if "P_C_Comb" in strat:
-                        _strat = "Put-Call Comb"
-                    else:
-                        _strat = "Best P/C"
-
-                    # determine gap type
-                    if "Gap" not in strat:
-                        gap_str = ""
-
-                    _strat = _strat + gap_str  # add gap onto the end of strat name
-
-                    # determine weekday type
-                    if strat.startswith("All"):
-                        _weekday = "All"
-                    else:
-                        _weekday = current_weekday
-
-                # finally select the appropriate df_dict
-                df_dict = df_dicts[_strat][_weekday]
-
-                # get the best times for this strat
-                best_times_df = get_top_times(
-                    df_dict, strategy_settings, best_time_date, num_tranches
-                )
-
-                if portfolio_mode:
-                    # filter out other sources since all sources are included
-                    source = os.path.splitext(strat)[0]
-                    best_times_df = (
-                        best_times_df[best_times_df["Source"].str.endswith(source)]
-                        .sort_values("Values", ascending=False)
-                        .head(num_tranches)
-                    )
-
-                if settings["-PASSTHROUGH_MODE-"]:
-                    # get all the times this traded on this date
-                    source_df = df_dicts["Put-Call Comb"]["All"][source]["org_df"]
-                    _filtered_df = source_df[
-                        source_df["EntryTime"].dt.date == current_date
-                    ]
-                    best_times = (
-                        _filtered_df["EntryTime"]
-                        .dt.strftime("%H:%M:%S")
-                        .unique()
-                        .tolist()
-                    )
-                    # we don't determine the tranche qtys in passthrough mode, we just need
-                    # to trade whaterver is in the trade log for that day.  Let's determine
-                    # the qtys to trade for each trade in the log.
-                    tranche_qtys = []
-                    for _ in best_times:
-                        if use_scaling:
-                            current_value = strat_dict["Current Value"]
-                            # calc total qty
-                            total_qty = (
-                                current_value
-                                * settings["-PORT_WEIGHT-"]
-                                / 100
-                                / settings["-BP_PER-"]
+                        strat_dict["Num Tranches"] = tranches
+                        strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
+                        if portfolio_mode:
+                            weighted_value = (
+                                port_dict["Current Value"] * settings["-PORT_WEIGHT-"] / 100
                             )
-
-                            # qty per trade
-                            qty = int(total_qty / len(best_times))
-                            tranche_qtys.append(max(qty, 1))
-                        else:
-                            tranche_qtys.append(1)
-                else:  # no passthrough, use best times analysis
-                    best_times = best_times_df["Top Times"].to_list()
-
-                for time in best_times:
-                    # get the qty for this tranche time
-                    qty = tranche_qtys[best_times.index(time)]
-                    full_dt = dt.datetime.combine(
-                        current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
-                    )
-
-                    if not settings["-PASSTHROUGH_MODE-"]:
-                        # get the source df, we already have it from eariler for pass-through
-                        source = best_times_df.loc[
-                            best_times_df["Top Times"] == time, "Source"
-                        ].values[0]
-                        source_df = df_dict[source]["org_df"]
-
-                    filtered_rows = source_df[source_df["EntryTime"] == full_dt].copy()
-
-                    if filtered_rows.empty:
-                        continue
-
-                    filtered_rows["qty"] = qty
-                    filtered_rows["source"] = source
-
-                    if is_BYOB_data(source_df):
-                        gross_pnl = (
-                            filtered_rows["ProfitLossAfterSlippage"].sum() * 100 * qty
-                        )
-                        commissions = filtered_rows["CommissionFees"].sum() * qty
-                        pnl = gross_pnl - commissions
+                            num_contracts = int(weighted_value / bp_per_contract)
+                            tranches = determine_num_tranches(
+                                min_tranches, max_tranches, num_contracts
+                            )
+                            strat_dict["Port Num Tranches"] = tranches
+                            strat_dict["Port Tranche Qtys"] = determine_tranche_qtys(
+                                tranches
+                            )
                     else:
-                        pnl = filtered_rows["P/L"].sum() * qty
+                        # not scaling
+                        num_contracts = settings["-TOP_X-"]
+                        strat_dict["Num Tranches"] = num_contracts
+                        strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
+                        strat_dict["Port Num Tranches"] = num_contracts
+                        strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
 
-                    # log trade
-                    strat_dict["Tlog Auto Exclusions"] = pd.concat(
-                        [strat_dict["Tlog Auto Exclusions"], filtered_rows],
-                        ignore_index=True,
-                    )
-                    if warmed_up and not skip_day:
-                        strat_dict["trade log"] = pd.concat(
-                            [strat_dict["trade log"], filtered_rows], ignore_index=True
-                        )
-                        strat_dict["Current Value"] += pnl
-                        strat_dict["Current Day PnL"] += pnl
-
-            if current_weekday in day_list:
-                # make sure its not the weekend
-                num_tranches = strat_dict["Num Tranches"]
-                tranche_qtys = strat_dict["Tranche Qtys"]
-                log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys)
-                if portfolio_mode:
-                    num_tranches = strat_dict["Port Num Tranches"]
-                    tranche_qtys = strat_dict["Port Tranche Qtys"]
-                    log_pnl_and_trades(port_dict, num_tranches, tranche_qtys)
-
-            def calc_metrics(strat_dict: dict, strat: str, results: dict) -> None:
-                # calc metrics and log the results for the day
-                if strat_dict["Current Value"] >= strat_dict["Highest Value"]:
-                    strat_dict["Highest Value"] = strat_dict["Current Value"]
-                    strat_dict["DD Days"] = 0
+                if settings["-AGG_TYPE-"] == "Monthly":
+                    # date for best times should be the month prior as we don't know the future yet
+                    best_time_date = current_date - relativedelta(months=1)
+                elif settings["-AGG_TYPE-"] == "Semi-Monthly":
+                    # grab from last half-month
+                    best_time_date = current_date - relativedelta(days=15)
                 else:
-                    # we are in Drawdown
-                    dd = (
-                        strat_dict["Highest Value"] - strat_dict["Current Value"]
-                    ) / strat_dict["Highest Value"]
-                    strat_dict["Current DD"] = dd
-                    if dd > strat_dict["Max DD"]:
-                        strat_dict["Max DD"] = dd
-                    strat_dict["DD Days"] += 1
+                    # grab from last week
+                    best_time_date = current_date - relativedelta(weeks=1)
 
-                if strat_dict["Current Day PnL"] > 0:
-                    strat_dict["Win Streak"] += 1
-                    strat_dict["Loss Streak"] = 0
-                elif strat_dict["Current Day PnL"] < 0:
-                    # tie does not change any streak
-                    strat_dict["Win Streak"] = 0
-                    strat_dict["Loss Streak"] += 1
+                def log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys):
+                    # determine gap info
+                    gap_str = ""
+                    if settings["-GAP_ANALYSIS-"]:
+                        _gap_type = "Gap%" if settings["-GAP_TYPE-"] == "%" else "Gap"
+                        try:
+                            gap_value = spx_history.at[current_date, _gap_type]
+                        except KeyError as e:
+                            # probably a day market was not open (i.e. holiday)
+                            gap_value = 0
+                        if gap_value > settings["-GAP_THRESHOLD-"]:
+                            gap_str = " Gap Up"
+                        elif gap_value < -settings["-GAP_THRESHOLD-"]:
+                            gap_str = " Gap Down"
 
-                new_row = pd.DataFrame(
-                    [
-                        {
-                            "Date": current_date,
-                            "Current Value": strat_dict["Current Value"],
-                            "Highest Value": strat_dict["Highest Value"],
-                            "Max DD": strat_dict["Max DD"],
-                            "Current DD": strat_dict["Current DD"],
-                            "DD Days": strat_dict["DD Days"],
-                            "Day PnL": strat_dict["Current Day PnL"],
-                            "Win Streak": strat_dict["Win Streak"],
-                            "Loss Streak": strat_dict["Loss Streak"],
-                            "Initial Value": initial_value,
-                            "Weekday": current_weekday,
-                        }
-                    ]
-                )
-                results[strat] = pd.concat([results[strat], new_row], ignore_index=True)
+                    if portfolio_mode:
+                        # determine which strat to use
+                        if settings["-PUT_OR_CALL-"]:
+                            _strat = "Best P/C"
+                        else:
+                            _strat = "Put-Call Comb"
 
-            if warmed_up and not skip_day:
-                calc_metrics(strat_dict, strat, results)
+                        _strat = _strat + gap_str  # add gap info onto the end of strat name
 
-            if skip_day:
-                # this is a skip day just increment the DD days if needed
-                if strat_dict["DD Days"] > 0:
-                    strat_dict["DD Days"] += 1
-                if portfolio_mode and port_dict["DD Days"] > 0:
-                    port_dict["DD Days"] += 1
+                        # determine which weekday to use
+                        if settings["-IDV_WEEKDAY-"]:
+                            _weekday = current_weekday
+                        else:
+                            _weekday = "All"
 
-        # calculate all the stats for the portfolio now that all other strats have traded
-        if portfolio_mode and warmed_up and not skip_day:
-            calc_metrics(port_dict, "Portfolio", results)
+                    else:
+                        # determine strat name for df_dicts
+                        if "P_C_Comb" in strat:
+                            _strat = "Put-Call Comb"
+                        else:
+                            _strat = "Best P/C"
 
-        current_date += dt.timedelta(1)
+                        # determine gap type
+                        if "Gap" not in strat:
+                            gap_str = ""
 
-    for strat in portfolio_metrics:
-        if not results[strat].empty:
-            results[strat]["Date"] = pd.to_datetime(results[strat]["Date"])
-            uuid_str = str(uuid.uuid4())[:8]
-            if export_trades:
-                base_filename = f"{strat} - TradeLog_{uuid_str}"
-                ext = ".csv"
-                export_filename = get_next_filename(path, base_filename, ext)
-                portfolio_metrics[strat]["trade log"].to_csv(
-                    export_filename, index=False
-                )
-            if export_OO_sig:
-                base_filename = f"{strat} - OO_Signal_File_{uuid_str}"
-                ext = ".csv"
-                export_filename = get_next_filename(path, base_filename, ext)
-                export_oo_sig_file(
-                    portfolio_metrics[strat]["trade log"], export_filename
-                )
-    results_queue.put(("-BACKTEST_END-", results))
-    return results
+                        _strat = _strat + gap_str  # add gap onto the end of strat name
 
+                        # determine weekday type
+                        if strat.startswith("All"):
+                            _weekday = "All"
+                        else:
+                            _weekday = current_weekday
+
+                    # finally select the appropriate df_dict
+                    df_dict = df_dicts[_strat][_weekday]
+
+                    # get the best times for this strat
+                    best_times_df = get_top_times(
+                        df_dict, strategy_settings, best_time_date, num_tranches
+                    )
+
+                    if portfolio_mode:
+                        # filter out other sources since all sources are included
+                        source = os.path.splitext(strat)[0]
+                        best_times_df = (
+                            best_times_df[best_times_df["Source"].str.endswith(source)]
+                            .sort_values("Values", ascending=False)
+                            .head(num_tranches)
+                        )
+
+                    if settings["-PASSTHROUGH_MODE-"]:
+                        # get all the times this traded on this date
+                        source_df = df_dicts["Put-Call Comb"]["All"][source]["org_df"]
+                        _filtered_df = source_df[
+                            source_df["EntryTime"].dt.date == current_date
+                        ]
+                        best_times = (
+                            _filtered_df["EntryTime"]
+                            .dt.strftime("%H:%M:%S")
+                            .unique()
+                            .tolist()
+                        )
+                        # we don't determine the tranche qtys in passthrough mode, we just need
+                        # to trade whaterver is in the trade log for that day.  Let's determine
+                        # the qtys to trade for each trade in the log.
+                        tranche_qtys = []
+                        for _ in best_times:
+                            if use_scaling:
+                                current_value = strat_dict["Current Value"]
+                                # calc total qty
+                                total_qty = (
+                                    current_value
+                                    * settings["-PORT_WEIGHT-"]
+                                    / 100
+                                    / settings["-BP_PER-"]
+                                )
+
+                                # qty per trade
+                                qty = int(total_qty / len(best_times))
+                                tranche_qtys.append(max(qty, 1))
+                            else:
+                                tranche_qtys.append(1)
+                    else:  # no passthrough, use best times analysis
+                        best_times = best_times_df["Top Times"].to_list()
+
+                    for time in best_times:
+                        # get the qty for this tranche time
+                        qty = tranche_qtys[best_times.index(time)]
+                        full_dt = dt.datetime.combine(
+                            current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
+                        )
+
+                        if not settings["-PASSTHROUGH_MODE-"]:
+                            # get the source df, we already have it from eariler for pass-through
+                            source = best_times_df.loc[
+                                best_times_df["Top Times"] == time, "Source"
+                            ].values[0]
+                            source_df = df_dict[source]["org_df"]
+
+                        filtered_rows = source_df[source_df["EntryTime"] == full_dt].copy()
+
+                        if filtered_rows.empty:
+                            continue
+
+                        filtered_rows["qty"] = qty
+                        filtered_rows["source"] = source
+
+                        if is_BYOB_data(source_df):
+                            gross_pnl = (
+                                filtered_rows["ProfitLossAfterSlippage"].sum() * 100 * qty
+                            )
+                            commissions = filtered_rows["CommissionFees"].sum() * qty
+                            pnl = gross_pnl - commissions
+                        else:
+                            pnl = filtered_rows["P/L"].sum() * qty
+
+                        # log trade
+                        strat_dict["Tlog Auto Exclusions"] = pd.concat(
+                            [strat_dict["Tlog Auto Exclusions"], filtered_rows],
+                            ignore_index=True,
+                        )
+                        if warmed_up and not skip_day:
+                            strat_dict["trade log"] = pd.concat(
+                                [strat_dict["trade log"], filtered_rows], ignore_index=True
+                            )
+                            strat_dict["Current Value"] += pnl
+                            strat_dict["Current Day PnL"] += pnl
+
+                if current_weekday in day_list:
+                    # make sure its not the weekend
+                    num_tranches = strat_dict["Num Tranches"]
+                    tranche_qtys = strat_dict["Tranche Qtys"]
+                    log_pnl_and_trades(strat_dict, num_tranches, tranche_qtys)
+                    if portfolio_mode:
+                        num_tranches = strat_dict["Port Num Tranches"]
+                        tranche_qtys = strat_dict["Port Tranche Qtys"]
+                        log_pnl_and_trades(port_dict, num_tranches, tranche_qtys)
+
+                def calc_metrics(strat_dict: dict, strat: str, results: dict) -> None:
+                    # calc metrics and log the results for the day
+                    if strat_dict["Current Value"] >= strat_dict["Highest Value"]:
+                        strat_dict["Highest Value"] = strat_dict["Current Value"]
+                        strat_dict["DD Days"] = 0
+                    else:
+                        # we are in Drawdown
+                        dd = (
+                            strat_dict["Highest Value"] - strat_dict["Current Value"]
+                        ) / strat_dict["Highest Value"]
+                        strat_dict["Current DD"] = dd
+                        if dd > strat_dict["Max DD"]:
+                            strat_dict["Max DD"] = dd
+                        strat_dict["DD Days"] += 1
+
+                    if strat_dict["Current Day PnL"] > 0:
+                        strat_dict["Win Streak"] += 1
+                        strat_dict["Loss Streak"] = 0
+                    elif strat_dict["Current Day PnL"] < 0:
+                        # tie does not change any streak
+                        strat_dict["Win Streak"] = 0
+                        strat_dict["Loss Streak"] += 1
+
+                    new_row = pd.DataFrame(
+                        [
+                            {
+                                "Date": current_date,
+                                "Current Value": strat_dict["Current Value"],
+                                "Highest Value": strat_dict["Highest Value"],
+                                "Max DD": strat_dict["Max DD"],
+                                "Current DD": strat_dict["Current DD"],
+                                "DD Days": strat_dict["DD Days"],
+                                "Day PnL": strat_dict["Current Day PnL"],
+                                "Win Streak": strat_dict["Win Streak"],
+                                "Loss Streak": strat_dict["Loss Streak"],
+                                "Initial Value": initial_value,
+                                "Weekday": current_weekday,
+                            }
+                        ]
+                    )
+                    results[strat] = pd.concat([results[strat], new_row], ignore_index=True)
+
+                if warmed_up and not skip_day:
+                    calc_metrics(strat_dict, strat, results)
+
+                if skip_day:
+                    # this is a skip day just increment the DD days if needed
+                    if strat_dict["DD Days"] > 0:
+                        strat_dict["DD Days"] += 1
+                    if portfolio_mode and port_dict["DD Days"] > 0:
+                        port_dict["DD Days"] += 1
+
+            # calculate all the stats for the portfolio now that all other strats have traded
+            if portfolio_mode and warmed_up and not skip_day:
+                calc_metrics(port_dict, "Portfolio", results)
+
+            current_date += dt.timedelta(1)
+
+        for strat in portfolio_metrics:
+            if not results[strat].empty:
+                results[strat]["Date"] = pd.to_datetime(results[strat]["Date"])
+                uuid_str = str(uuid.uuid4())[:8]
+                if export_trades:
+                    base_filename = f"{strat} - TradeLog_{uuid_str}"
+                    ext = ".csv"
+                    export_filename = get_next_filename(path, base_filename, ext)
+                    portfolio_metrics[strat]["trade log"].to_csv(
+                        export_filename, index=False
+                    )
+                if export_OO_sig:
+                    base_filename = f"{strat} - OO_Signal_File_{uuid_str}"
+                    ext = ".csv"
+                    export_filename = get_next_filename(path, base_filename, ext)
+                    export_oo_sig_file(
+                        portfolio_metrics[strat]["trade log"], export_filename
+                    )
+        if results_queue:
+            results_queue.put(("-BACKTEST_END-", results))
+        return results
+    except Exception as e:
+        if results_queue:
+            results_queue.put(("-BACKTEST_END-", e))
+        logger.exception("Exception in walk_forward_test")
 
 @with_gc
 def options_window(settings) -> None:
@@ -2367,12 +2479,12 @@ def options_window(settings) -> None:
     window.close()
     Checkbox.clear_elements()
 
-
 def main():
     global news_events_loaded, news_events
+    setup_logging("ERROR")
     # try to load news events if csv found
-    find_news_process = Process(
-        target=find_and_import_news_events, args=(results_queue,)
+    find_news_process = threading.Thread(
+        target=find_and_import_news_events, args=(results_queue,), daemon=True
     )
     find_news_process.start()
     # load default settings or last used
@@ -3063,15 +3175,17 @@ def main():
             window["-PROGRESS-"].update(visible=True)
             window["Analyze"].update("Working...", disabled=True)
             window["Cancel"].update(visible=True)
-            run_analysis_process = Process(
-                target=run_analysis_threaded,
-                args=(
-                    files_list,
-                    strategy_settings,
-                    values["-OPEN_FILES-"],
-                    results_queue,
-                    cancel_flag,
-                ),
+            run_analysis_process = threading.Thread(
+                target=optimizer, #run_analysis_threaded,
+                kwargs=
+                    {
+                        "files_list": files_list,
+                        "strategy_settings": strategy_settings,
+                        "open_files": values["-OPEN_FILES-"],
+                        "results_queue": results_queue,
+                        "cancel_flag": cancel_flag,
+                        "create_excel": True,
+                    }
             )
             run_analysis_process.start()
             test_running = True
@@ -3216,26 +3330,29 @@ def main():
 
             if result_key == "-RUN_ANALYSIS_END-":
                 run_analysis_process.join()
-                df_dicts = results
-                for right_type, day_dict in df_dicts.items():
-                    for day, df_dict in day_dict.items():
+                if isinstance(results, Exception):
+                    sg.popup_error(f"Error during Analysis:\n{type(results).__name__}: {results}\nCheck log file for details.\n\nAre you sure this is a BYOB or OO csv?")
+                else:
+                    df_dicts = results
+                    for right_type, day_dict in df_dicts.items():
+                        for day, df_dict in day_dict.items():
 
-                        top_times_df = get_top_times(df_dict, strategy_settings)
-                        table_data = top_times_df.values.tolist()
-                        if right_type.endswith("Gap Up"):
-                            window[
-                                f"-TABLE_{right_type.removesuffix(" Gap Up")}_{"Gap Up"}_{day}-"
-                            ].update(values=table_data, num_rows=len(table_data))
-                        elif right_type.endswith("Gap Down"):
-                            window[
-                                f"-TABLE_{right_type.removesuffix(" Gap Down")}_{"Gap Down"}_{day}-"
-                            ].update(values=table_data, num_rows=len(table_data))
-                        else:
-                            window[f"-TABLE_{right_type}_{"All"}_{day}-"].update(
-                                values=table_data, num_rows=len(table_data)
-                            )
+                            top_times_df = get_top_times(df_dict, strategy_settings)
+                            table_data = top_times_df.values.tolist()
+                            if right_type.endswith("Gap Up"):
+                                window[
+                                    f"-TABLE_{right_type.removesuffix(" Gap Up")}_{"Gap Up"}_{day}-"
+                                ].update(values=table_data, num_rows=len(table_data))
+                            elif right_type.endswith("Gap Down"):
+                                window[
+                                    f"-TABLE_{right_type.removesuffix(" Gap Down")}_{"Gap Down"}_{day}-"
+                                ].update(values=table_data, num_rows=len(table_data))
+                            else:
+                                window[f"-TABLE_{right_type}_{"All"}_{day}-"].update(
+                                    values=table_data, num_rows=len(table_data)
+                                )
 
-                if values["-BACKTEST-"]:
+                if values["-BACKTEST-"] and not isinstance(results, Exception):
                     path = os.path.join(
                         os.path.dirname(files_list[0]), "data", "trade_logs"
                     )
@@ -3259,21 +3376,6 @@ def main():
                         },
                     )
                     wf_test_process.start()
-                    # threading.Thread(
-                    #     target=lambda: walk_forward_test(
-                    #         df_dicts,
-                    #         path,
-                    #         strategy_settings,
-                    #         initial_value=float(values["-START_VALUE-"]),
-                    #         start=start_date,
-                    #         end=end_date,
-                    #         use_scaling=values["-SCALING-"],
-                    #         export_trades=values["-EXPORT-"],
-                    #         export_OO_sig=values["-EXPORT_OO_SIG-"],
-                    #     ),
-                    #     daemon=True,
-                    # ).start()
-
                 else:
                     window["-PROGRESS-"].update(visible=False)
                     window["Cancel"].update(visible=False)
@@ -3286,6 +3388,9 @@ def main():
                 window["Cancel"].update(visible=False)
                 window["Analyze"].update("Analyze", disabled=False)
                 test_running = False
+                if isinstance(results, Exception):
+                    sg.popup_error(f"Error during walk-forward test:\n{type(results).__name__}: {results}\nCheck log file for details.")
+                    continue
                 check_result = True
                 for result_df in results.values():
                     if result_df.empty:
@@ -3339,7 +3444,10 @@ def main():
                 continue
 
             elif result_key == "-BACKTEST_CANCELED-":
-                wf_test_process.join()
+                if results == "-RUN_ANALYSIS-":
+                    run_analysis_process.join()
+                elif results == "-WALK_FORWARD-":
+                    wf_test_process.join()
                 window["-PROGRESS-"].update(visible=False)
                 window["Cancel"].update("Cancel", disabled=False, visible=False)
                 window["Analyze"].update("Analyze", disabled=False)
@@ -3353,6 +3461,7 @@ def main():
                     sg.popup_no_border(results, auto_close=True, auto_close_duration=5)
                 else:
                     news_events = results
+            
             elif result_key == "-ERROR-":
                 sg.popup_no_border(results)
         # move the progress bar
