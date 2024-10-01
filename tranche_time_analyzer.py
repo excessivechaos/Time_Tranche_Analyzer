@@ -164,6 +164,7 @@ def with_gc(func):
 
     return wrapper
 
+
 def analyze(
     df: pd.DataFrame,
     settings: dict,
@@ -349,7 +350,8 @@ def analyze(
         df_output_1mo_avg_combined,
     )
 
-def calc_metric(results: dict=None, metric: str=None):
+
+def calc_metric(results: dict = None, metric: str = None):
     """Calc a certain metric for a single strategy"""
     df = list(results.values())[0]
     # Calculate summary statistics for the strategy
@@ -398,9 +400,6 @@ def calc_metric(results: dict=None, metric: str=None):
     lowest_monthly_pnl = monthly_pnl.min()
     if metric == "lowest_month":
         return lowest_monthly_pnl
-
-
-
 
 
 def create_excel_file(
@@ -635,10 +634,12 @@ def create_excel_file(
 
     return df_dicts
 
+
 def chunk_list(input_list, chunk_size=4):
     return [
         input_list[i : i + chunk_size] for i in range(0, len(input_list), chunk_size)
     ]
+
 
 def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
     """
@@ -708,6 +709,7 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
 
     return result_df
 
+
 def get_dpi_scale():
     try:
         user32 = ctypes.windll.user32
@@ -716,6 +718,7 @@ def get_dpi_scale():
         return dpi / 96.0  # 96 is the standard DPI
     except:
         return 1  # Default to no scaling if not on Windows or if there's an error
+
 
 def format_float(value):
     """This will remove decmal from float for GUI
@@ -728,6 +731,7 @@ def format_float(value):
         return value
     else:
         return str(value)
+
 
 @with_gc
 def get_correlation_matrix(results):
@@ -762,6 +766,7 @@ def get_correlation_matrix(results):
     plt.close()
 
     return img_str
+
 
 @with_gc
 def get_monthly_pnl_chart(results):
@@ -809,6 +814,7 @@ def get_monthly_pnl_chart(results):
     img_str = base64.b64encode(buf.getvalue())
     plt.close()
     return img_str
+
 
 @with_gc
 def get_pnl_plot(results):
@@ -896,6 +902,7 @@ def get_pnl_plot(results):
     plt.close()
     return table_data, img_str
 
+
 @with_gc
 def get_news_event_pnl_chart(results, sum=True):
     # Get list of news events
@@ -952,6 +959,7 @@ def get_news_event_pnl_chart(results, sum=True):
     plt.close()
     return img_str
 
+
 @with_gc
 def get_weekday_pnl_chart(results):
     # Filter weekdays based on exclusions
@@ -997,6 +1005,7 @@ def get_weekday_pnl_chart(results):
     plt.close()
     return img_str
 
+
 def get_spx_gaps(start_date, end_date):
     start = start_date - dt.timedelta(
         10
@@ -1007,6 +1016,7 @@ def get_spx_gaps(start_date, end_date):
     spx_history["Gap"] = spx_history["Open"] - spx_history["Close"].shift(1)
     spx_history["Gap%"] = spx_history["Gap"] / spx_history["Close"].shift(1) * 100
     return spx_history
+
 
 def get_top_times(
     df_dict, strategy_settings, date: dt.datetime.date = None, top_n_override=0
@@ -1104,6 +1114,7 @@ def get_top_times(
 
     return result_df
 
+
 def import_news_events(filename) -> bool:
     global news_events
     """
@@ -1195,6 +1206,7 @@ def import_news_events(filename) -> bool:
 
     return news_events
 
+
 def find_and_import_news_events(results_queue: Queue):
     best_file = None
     max_rows = 0
@@ -1235,6 +1247,7 @@ def find_and_import_news_events(results_queue: Queue):
         )
     )
 
+
 def get_next_filename(path: str, base: str, ext: str) -> str:
     """
     Takes a path, base name, and extension.
@@ -1249,8 +1262,10 @@ def get_next_filename(path: str, base: str, ext: str) -> str:
         counter += 1
     return filename
 
+
 def is_BYOB_data(df: pd.DataFrame) -> bool:
     return df.columns[0] == "TradeID"
+
 
 def load_data(
     file: str,
@@ -1347,41 +1362,70 @@ def load_data(
         end_date,
     )
 
+
 def run_analysis_wrapper(kwargs):
     return run_analysis_threaded(**kwargs)
+
 
 def wf_test_wrapper(kwargs):
     return walk_forward_test(**kwargs)
 
+
 def calc_metric_wrapper(kwargs):
     return calc_metric(**kwargs)
 
+
 @with_gc
-def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, generations: int=5, children: int=5, selection_metric: str='mar', **kwargs):
+def optimizer(
+    results_queue: Queue,
+    cancel_flag,
+    files_list,
+    strategy_settings,
+    generations: int = 5,
+    children: int = 5,
+    selection_metric: str = "mar",
+    **kwargs,
+):
     setup_logging("ERROR")
     try:
-        def get_strat_settings_random(pre_select: dict = None, bp_per: float=6000) -> dict:
+
+        def get_strat_settings_random(
+            pre_select: dict = None, bp_per: float = 6000
+        ) -> dict:
             avg_periods = [x for x in range(1, 13)]
             settings = {}
-            if pre_select: # 
+            if pre_select:  #
                 settings.update(pre_select)
             if "-AVG_PERIOD_2-" not in settings:
                 settings["-AVG_PERIOD_2-"] = random.choice(avg_periods)
             if "-AVG_PERIOD_1-" not in settings:
-                settings["-AVG_PERIOD_1-"] = random.choice(max([x for x in range(1, settings["-AVG_PERIOD_2-"])], [1]))
-            if "-PERIOD_1_WEIGHT-" not in settings and "-PERIOD_2_WEIGHT-" not in settings:
-                settings["-PERIOD_1_WEIGHT-"] = random.choice([x for x in range(5, 101, 5)])
+                settings["-AVG_PERIOD_1-"] = random.choice(
+                    max([x for x in range(1, settings["-AVG_PERIOD_2-"])], [1])
+                )
+            if (
+                "-PERIOD_1_WEIGHT-" not in settings
+                and "-PERIOD_2_WEIGHT-" not in settings
+            ):
+                settings["-PERIOD_1_WEIGHT-"] = random.choice(
+                    [x for x in range(5, 101, 5)]
+                )
                 settings["-PERIOD_2_WEIGHT-"] = 100 - settings["-PERIOD_1_WEIGHT-"]
-            elif "-PERIOD_1_WEIGHT-" in settings and "-PERIOD_2_WEIGHT-" not in settings:
+            elif (
+                "-PERIOD_1_WEIGHT-" in settings and "-PERIOD_2_WEIGHT-" not in settings
+            ):
                 settings["-PERIOD_2_WEIGHT-"] = 100 - settings["-PERIOD_1_WEIGHT-"]
-            elif "-PERIOD_2_WEIGHT-" in settings and "-PERIOD_1_WEIGHT-" not in settings:
+            elif (
+                "-PERIOD_2_WEIGHT-" in settings and "-PERIOD_1_WEIGHT-" not in settings
+            ):
                 settings["-PERIOD_1_WEIGHT-"] = 100 - settings["-PERIOD_2_WEIGHT-"]
             if "-TOP_X-" not in settings:
                 settings["-TOP_X-"] = random.choice([x for x in range(1, 16)])
             if "-CALC_TYPE-" not in settings:
                 settings["-CALC_TYPE-"] = random.choice(["PCR", "PnL"])
             if "-AGG_TYPE-" not in settings:
-                settings["-AGG_TYPE-"] = random.choice(["Monthly", "Semi-Monthly", "Weekly"])
+                settings["-AGG_TYPE-"] = random.choice(
+                    ["Monthly", "Semi-Monthly", "Weekly"]
+                )
             if "-PUT_OR_CALL-" not in settings:
                 settings["-PUT_OR_CALL-"] = random.choice([True, False])
             if "-IDV_WEEKDAY-" not in settings:
@@ -1406,15 +1450,19 @@ def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, 
                 if option not in settings:
                     settings[option] = []
             return settings
+
         try:
             cpu_count = os.cpu_count()
         except Exception as e:
             logger.exception("Error retirieving CPU count")
             cpu_count = 2
-        
+
         with Pool(processes=cpu_count) as pool:
-            def run_genetic_test(run_analysis_kwargs_list, metric='mar'):
-                analysis_results = pool.map(run_analysis_wrapper, run_analysis_kwargs_list)
+
+            def run_genetic_test(run_analysis_kwargs_list, metric="mar"):
+                analysis_results = pool.map(
+                    run_analysis_wrapper, run_analysis_kwargs_list
+                )
                 for result in analysis_results:
                     if isinstance(result, Exception):
                         raise result
@@ -1426,7 +1474,9 @@ def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, 
                         "cancel_flag": None,
                         "df_dicts": analysis_results[i],
                         "path": "",
-                        "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"],
+                        "strategy_settings": run_analysis_kwargs_list[i][
+                            "strategy_settings"
+                        ],
                         "use_scaling": True,
                     }
                     wf_test_kwargs_list.append(wf_test_kwargs)
@@ -1435,16 +1485,29 @@ def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, 
                     if isinstance(result, Exception):
                         raise result
                 logger.debug(f"wf test results: {len(wf_test_results)}")
-                calc_metric_kwargs_list = [{'results': wf_test_results[i], 'metric': metric} for i in range(len(wf_test_results))]
-                calc_metric_results = pool.map(calc_metric_wrapper, calc_metric_kwargs_list)
-                final_results = [{"metric":calc_metric_results[i], "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"]} for i in range(len(run_analysis_kwargs_list))]
+                calc_metric_kwargs_list = [
+                    {"results": wf_test_results[i], "metric": metric}
+                    for i in range(len(wf_test_results))
+                ]
+                calc_metric_results = pool.map(
+                    calc_metric_wrapper, calc_metric_kwargs_list
+                )
+                final_results = [
+                    {
+                        "metric": calc_metric_results[i],
+                        "strategy_settings": run_analysis_kwargs_list[i][
+                            "strategy_settings"
+                        ],
+                    }
+                    for i in range(len(run_analysis_kwargs_list))
+                ]
                 best = sorted(final_results, key=lambda x: x["metric"], reverse=True)
                 logger.debug(best[0])
                 return best
-            
+
             strat_name = os.path.basename(files_list[0])
             run_analysis_kwargs_list = []
-            for _ in range(10): # create 10 random parents
+            for _ in range(10):  # create 10 random parents
                 settings = {strat_name: get_strat_settings_random()}
                 run_analysis_threaded_kwargs = {
                     "files_list": files_list,
@@ -1456,17 +1519,36 @@ def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, 
                 }
                 run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
             logger.debug(f"Starting intial run with 10 parents")
-            results = run_genetic_test(run_analysis_kwargs_list, metric=selection_metric)  # run the initial test
+            results = run_genetic_test(
+                run_analysis_kwargs_list, metric=selection_metric
+            )  # run the initial test
             logger.debug(f"Initial results: {results}")
             best_performers = results[:3]  # select the top 3 performers
             best_parent = results[0]
-            key_traits = ["-AVG_PERIOD_2-", "-AVG_PERIOD_1-", "-PERIOD_1_WEIGHT-", "-TOP_X-", "-CALC_TYPE-", "-AGG_TYPE-", "-PUT_OR_CALL-", "-IDV_WEEKDAY-"]
-            for _ in range(generations): # run the genetic algorithm for the specified number of generations
+            key_traits = [
+                "-AVG_PERIOD_2-",
+                "-AVG_PERIOD_1-",
+                "-PERIOD_1_WEIGHT-",
+                "-TOP_X-",
+                "-CALC_TYPE-",
+                "-AGG_TYPE-",
+                "-PUT_OR_CALL-",
+                "-IDV_WEEKDAY-",
+            ]
+            for _ in range(
+                generations
+            ):  # run the genetic algorithm for the specified number of generations
                 run_analysis_kwargs_list = []
                 for trait in key_traits:
-                    for _child in range(children): # create 5 childern that inherit this trait from the best_parent
-                        pre_select = {trait: best_parent["strategy_settings"][strat_name][trait]}
-                        settings = {strat_name: get_strat_settings_random(pre_select=pre_select)}
+                    for _child in range(
+                        children
+                    ):  # create 5 childern that inherit this trait from the best_parent
+                        pre_select = {
+                            trait: best_parent["strategy_settings"][strat_name][trait]
+                        }
+                        settings = {
+                            strat_name: get_strat_settings_random(pre_select=pre_select)
+                        }
                         run_analysis_threaded_kwargs = {
                             "files_list": files_list,
                             "results_queue": None,
@@ -1476,14 +1558,23 @@ def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, 
                             "create_excel": False,
                         }
                         run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
-                results = run_genetic_test(run_analysis_kwargs_list, metric=selection_metric)
+                results = run_genetic_test(
+                    run_analysis_kwargs_list, metric=selection_metric
+                )
                 # Add the new results to the best_performers list and sort it based on the metric
-                best_performers = sorted(best_performers + results, key=lambda x: x["metric"], reverse=True)[:3]  # select the top 3 performers
-                best_parent = best_performers[0]  # select the best parent for the next generation
+                best_performers = sorted(
+                    best_performers + results, key=lambda x: x["metric"], reverse=True
+                )[
+                    :3
+                ]  # select the top 3 performers
+                best_parent = best_performers[
+                    0
+                ]  # select the best parent for the next generation
             logger.debug(f"Best performers: {best_performers}")
     except Exception as e:
         results_queue.put(("-RUN_ANALYSIS_END-", e))
         logger.exception("Error in optimizer")
+
 
 def resize_image(image_path, size):
     """Resize the image to the specified size."""
@@ -1492,6 +1583,7 @@ def resize_image(image_path, size):
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
 
 def resize_base64_image(base64_image, desired_height):
     # Decode the base64 string
@@ -1515,13 +1607,14 @@ def resize_base64_image(base64_image, desired_height):
     # Encode the resized image to base64
     return base64.b64encode(buf.getvalue())
 
+
 @with_gc
 def run_analysis_threaded(
     files_list="",
     strategy_settings={},
     open_files=False,
-    results_queue: Queue=None,
-    cancel_flag: Event=None, # type: ignore
+    results_queue: Queue = None,
+    cancel_flag: Event = None,  # type: ignore
     create_excel=True,
 ):
     setup_logging("ERROR")
@@ -1592,13 +1685,15 @@ def run_analysis_threaded(
         else:
             return e
         logger.exception("Error in run_analysis_threaded")
-        
+
+
 def save_settings(settings, settings_filename, values):
     for key in settings:
         settings[key] = values[key]
     os.makedirs(os.path.dirname(settings_filename), exist_ok=True)
     with open(settings_filename, "w") as f:
         json.dump(settings, f, indent=4)
+
 
 def set_default_app_settings(app_settings):
     # Setup defaults if setting did not load/exist
@@ -1645,6 +1740,7 @@ def set_default_app_settings(app_settings):
     if "-TOP_TIME_THRESHOLD-" not in app_settings:
         app_settings["-TOP_TIME_THRESHOLD-"] = ""
 
+
 def setup_logging(log_level):
     """
     sets up the logging, adds the sinks to loguru
@@ -1656,7 +1752,7 @@ def setup_logging(log_level):
     )
     logger.remove()
     if sys.stderr:
-        logger.add(sys.stderr, level='DEBUG', format=log_format)
+        logger.add(sys.stderr, level="DEBUG", format=log_format)
 
     # Get the directory of the current script
     if getattr(sys, "frozen", False):
@@ -1669,8 +1765,11 @@ def setup_logging(log_level):
     log_dir = os.path.join(current_dir, "data")
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "TTA.log")
-    logger.add(log_path, rotation="10 MB", retention=1, format=log_format, level=log_level)
-  
+    logger.add(
+        log_path, rotation="10 MB", retention=1, format=log_format, level=log_level
+    )
+
+
 def update_strategy_settings(values, settings):
     settings.update(
         {
@@ -1707,6 +1806,7 @@ def update_strategy_settings(values, settings):
         settings["-GAP_THRESHOLD-"] = 0
     if "-GAP_TYPE-" not in settings:
         settings["-GAP_TYPE-"] = "%"
+
 
 def validate_strategy_settings(strategy_settings):
     for strategy in strategy_settings:
@@ -1752,13 +1852,14 @@ def validate_strategy_settings(strategy_settings):
 
     return True
 
+
 @with_gc
 def walk_forward_test(
-    results_queue: Queue=None,
+    results_queue: Queue = None,
     cancel_flag=None,
-    df_dicts: dict=None,
-    path: str=None,
-    strategy_settings: dict=None,
+    df_dicts: dict = None,
+    path: str = None,
+    strategy_settings: dict = None,
     start: dt.datetime.date = None,
     end: dt.datetime.date = None,
     initial_value: float = 100_000,
@@ -1796,7 +1897,10 @@ def walk_forward_test(
                 end_date = _end_date
         max_long_avg_period = 0
         for settings in strategy_settings.values():
-            max_long_avg_period = max(max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"]), max_long_avg_period)
+            max_long_avg_period = max(
+                max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"]),
+                max_long_avg_period,
+            )
         date_adv = start_date + relativedelta(months=max_long_avg_period)
         warm_start = dt.date(date_adv.year, date_adv.month, 1)
         # use either the user input date or the first warmed up date
@@ -1862,7 +1966,9 @@ def walk_forward_test(
         # convert weekdays from full day name to short name. i.e. Monday to Mon
         day_list = [_day[:3] for _day in weekday_list]
 
-        def determine_auto_skip(date: dt.date, tlog: pd.DataFrame, agg_type: str) -> bool:
+        def determine_auto_skip(
+            date: dt.date, tlog: pd.DataFrame, agg_type: str
+        ) -> bool:
             """
             Calculate the expected value of any news events that
             occur on the given date and return True if negative expectancy
@@ -1877,7 +1983,8 @@ def walk_forward_test(
             trade_log["EntryTime"] = pd.to_datetime(trade_log["EntryTime"])
             if is_BYOB_data(trade_log):
                 trade_log["P/L"] = (
-                    trade_log["ProfitLossAfterSlippage"] * 100 - trade_log["CommissionFees"]
+                    trade_log["ProfitLossAfterSlippage"] * 100
+                    - trade_log["CommissionFees"]
                 )
 
             def _get_current_rolling_avg(df):
@@ -1972,7 +2079,9 @@ def walk_forward_test(
                 news_date_exclusions = []
                 if settings["-APPLY_EXCLUSIONS-"] != "Analysis":
                     # we are applying exclusions to either the WF test or both the WF and Analysis
-                    day_exlusions = [_day[:3] for _day in settings["-WEEKDAY_EXCLUSIONS-"]]
+                    day_exlusions = [
+                        _day[:3] for _day in settings["-WEEKDAY_EXCLUSIONS-"]
+                    ]
                     # get list of news event dates to skip.
                     for release, date_list in news_events.items():
                         if release in settings["-NEWS_EXCLUSIONS-"]:
@@ -2026,7 +2135,9 @@ def walk_forward_test(
                             for x in range(tranches):
                                 if x < num_contracts % tranches:
                                     # this is where we add the remaining contracts after filling up all tranches
-                                    tranche_qtys.append(int(num_contracts / tranches) + 1)
+                                    tranche_qtys.append(
+                                        int(num_contracts / tranches) + 1
+                                    )
                                 else:
                                     tranche_qtys.append(int(num_contracts / tranches))
                             return tranche_qtys
@@ -2034,7 +2145,9 @@ def walk_forward_test(
                         min_tranches = settings["-MIN_TRANCHES-"]
                         max_tranches = settings["-MAX_TRANCHES-"]
                         bp_per_contract = settings["-BP_PER-"]
-                        num_contracts = int(strat_dict["Current Value"] / bp_per_contract)
+                        num_contracts = int(
+                            strat_dict["Current Value"] / bp_per_contract
+                        )
                         tranches = determine_num_tranches(
                             min_tranches, max_tranches, num_contracts
                         )
@@ -2042,7 +2155,9 @@ def walk_forward_test(
                         strat_dict["Tranche Qtys"] = determine_tranche_qtys(tranches)
                         if portfolio_mode:
                             weighted_value = (
-                                port_dict["Current Value"] * settings["-PORT_WEIGHT-"] / 100
+                                port_dict["Current Value"]
+                                * settings["-PORT_WEIGHT-"]
+                                / 100
                             )
                             num_contracts = int(weighted_value / bp_per_contract)
                             tranches = determine_num_tranches(
@@ -2058,7 +2173,9 @@ def walk_forward_test(
                         strat_dict["Num Tranches"] = num_contracts
                         strat_dict["Tranche Qtys"] = [1 for x in range(num_contracts)]
                         strat_dict["Port Num Tranches"] = num_contracts
-                        strat_dict["Port Tranche Qtys"] = [1 for x in range(num_contracts)]
+                        strat_dict["Port Tranche Qtys"] = [
+                            1 for x in range(num_contracts)
+                        ]
 
                 if settings["-AGG_TYPE-"] == "Monthly":
                     # date for best times should be the month prior as we don't know the future yet
@@ -2092,7 +2209,9 @@ def walk_forward_test(
                         else:
                             _strat = "Put-Call Comb"
 
-                        _strat = _strat + gap_str  # add gap info onto the end of strat name
+                        _strat = (
+                            _strat + gap_str
+                        )  # add gap info onto the end of strat name
 
                         # determine which weekday to use
                         if settings["-IDV_WEEKDAY-"]:
@@ -2185,7 +2304,9 @@ def walk_forward_test(
                             ].values[0]
                             source_df = df_dict[source]["org_df"]
 
-                        filtered_rows = source_df[source_df["EntryTime"] == full_dt].copy()
+                        filtered_rows = source_df[
+                            source_df["EntryTime"] == full_dt
+                        ].copy()
 
                         if filtered_rows.empty:
                             continue
@@ -2195,7 +2316,9 @@ def walk_forward_test(
 
                         if is_BYOB_data(source_df):
                             gross_pnl = (
-                                filtered_rows["ProfitLossAfterSlippage"].sum() * 100 * qty
+                                filtered_rows["ProfitLossAfterSlippage"].sum()
+                                * 100
+                                * qty
                             )
                             commissions = filtered_rows["CommissionFees"].sum() * qty
                             pnl = gross_pnl - commissions
@@ -2209,7 +2332,8 @@ def walk_forward_test(
                         )
                         if warmed_up and not skip_day:
                             strat_dict["trade log"] = pd.concat(
-                                [strat_dict["trade log"], filtered_rows], ignore_index=True
+                                [strat_dict["trade log"], filtered_rows],
+                                ignore_index=True,
                             )
                             strat_dict["Current Value"] += pnl
                             strat_dict["Current Day PnL"] += pnl
@@ -2264,7 +2388,9 @@ def walk_forward_test(
                             }
                         ]
                     )
-                    results[strat] = pd.concat([results[strat], new_row], ignore_index=True)
+                    results[strat] = pd.concat(
+                        [results[strat], new_row], ignore_index=True
+                    )
 
                 if warmed_up and not skip_day:
                     calc_metrics(strat_dict, strat, results)
@@ -2307,6 +2433,7 @@ def walk_forward_test(
         if results_queue:
             results_queue.put(("-BACKTEST_END-", e))
         logger.exception("Exception in walk_forward_test")
+
 
 @with_gc
 def options_window(settings) -> None:
@@ -2549,6 +2676,7 @@ def options_window(settings) -> None:
             webbrowser.open(event[1])
     window.close()
     Checkbox.clear_elements()
+
 
 def main():
     global news_events_loaded, news_events
@@ -3247,16 +3375,15 @@ def main():
             window["Analyze"].update("Working...", disabled=True)
             window["Cancel"].update(visible=True)
             run_analysis_process = threading.Thread(
-                target=optimizer, #run_analysis_threaded,
-                kwargs=
-                    {
-                        "files_list": files_list,
-                        "strategy_settings": strategy_settings,
-                        "open_files": values["-OPEN_FILES-"],
-                        "results_queue": results_queue,
-                        "cancel_flag": cancel_flag,
-                        "create_excel": True,
-                    }
+                target=optimizer,  # run_analysis_threaded,
+                kwargs={
+                    "files_list": files_list,
+                    "strategy_settings": strategy_settings,
+                    "open_files": values["-OPEN_FILES-"],
+                    "results_queue": results_queue,
+                    "cancel_flag": cancel_flag,
+                    "create_excel": True,
+                },
             )
             run_analysis_process.start()
             test_running = True
@@ -3402,7 +3529,9 @@ def main():
             if result_key == "-RUN_ANALYSIS_END-":
                 run_analysis_process.join()
                 if isinstance(results, Exception):
-                    sg.popup_error(f"Error during Analysis:\n{type(results).__name__}: {results}\nCheck log file for details.\n\nAre you sure this is a BYOB or OO csv?")
+                    sg.popup_error(
+                        f"Error during Analysis:\n{type(results).__name__}: {results}\nCheck log file for details.\n\nAre you sure this is a BYOB or OO csv?"
+                    )
                 else:
                     df_dicts = results
                     for right_type, day_dict in df_dicts.items():
@@ -3460,7 +3589,9 @@ def main():
                 window["Analyze"].update("Analyze", disabled=False)
                 test_running = False
                 if isinstance(results, Exception):
-                    sg.popup_error(f"Error during walk-forward test:\n{type(results).__name__}: {results}\nCheck log file for details.")
+                    sg.popup_error(
+                        f"Error during walk-forward test:\n{type(results).__name__}: {results}\nCheck log file for details."
+                    )
                     continue
                 check_result = True
                 for result_df in results.values():
@@ -3532,7 +3663,7 @@ def main():
                     sg.popup_no_border(results, auto_close=True, auto_close_duration=5)
                 else:
                     news_events = results
-            
+
             elif result_key == "-ERROR-":
                 sg.popup_no_border(results)
         # move the progress bar
