@@ -1381,9 +1381,10 @@ def optimizer(
     cancel_flag,
     files_list,
     strategy_settings,
-    generations: int = 5,
+    generations: int = 3,
     children: int = 5,
     selection_metric: str = "mar",
+    start_date: dt.date = dt.date(2023, 1, 1),
     **kwargs,
 ):
     setup_logging("ERROR")
@@ -1392,12 +1393,16 @@ def optimizer(
         def get_strat_settings_random(
             pre_select: dict = None, bp_per: float = 6000
         ) -> dict:
-            avg_periods = [x for x in range(1, 13)]
             settings = {}
             if pre_select:  #
                 settings.update(pre_select)
-            if "-AVG_PERIOD_2-" not in settings:
-                settings["-AVG_PERIOD_2-"] = random.choice(avg_periods)
+            if "-AVG_PERIOD_2-" not in settings and "-AVG_PERIOD_1-" not in settings:
+                settings["-AVG_PERIOD_2-"] = random.choice([x for x in range(1, 13)])
+            elif "-AVG_PERIOD_2-" not in settings and "-AVG_PERIOD_1-" in settings:
+                # pick a period at random that is greater than the avg period 1, or 12 if period 1 is 12
+                settings["-AVG_PERIOD_2-"] = random.choice(
+                    min([x for x in range(settings["-AVG_PERIOD_1-"], 13)], [12])
+                )
             if "-AVG_PERIOD_1-" not in settings:
                 settings["-AVG_PERIOD_1-"] = random.choice(
                     max([x for x in range(1, settings["-AVG_PERIOD_2-"])], [1])
@@ -1459,7 +1464,9 @@ def optimizer(
 
         with Pool(processes=cpu_count) as pool:
 
-            def run_genetic_test(run_analysis_kwargs_list, metric="mar"):
+            def run_genetic_test(
+                run_analysis_kwargs_list, metric="mar", start_date: dt.date = None
+            ):
                 analysis_results = pool.map(
                     run_analysis_wrapper, run_analysis_kwargs_list
                 )
@@ -1478,6 +1485,7 @@ def optimizer(
                             "strategy_settings"
                         ],
                         "use_scaling": True,
+                        "start": start_date,
                     }
                     wf_test_kwargs_list.append(wf_test_kwargs)
                 wf_test_results = pool.map(wf_test_wrapper, wf_test_kwargs_list)
@@ -1505,10 +1513,20 @@ def optimizer(
                 logger.debug(best[0])
                 return best
 
+            settings_history = []
             strat_name = os.path.basename(files_list[0])
             run_analysis_kwargs_list = []
             for _ in range(10):  # create 10 random parents
                 settings = {strat_name: get_strat_settings_random()}
+                while settings in settings_history:
+                    # this configureation is already in or been tested
+                    # get new settings
+                    settings = {strat_name: get_strat_settings_random()}
+                    logger.debug(
+                        "We selected a confuration of settings that has already been selected for the initial test, getting a new random configuration"
+                    )
+                # add the settings to history
+                settings_history.append(settings)
                 run_analysis_threaded_kwargs = {
                     "files_list": files_list,
                     "results_queue": None,
@@ -1520,11 +1538,10 @@ def optimizer(
                 run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
             logger.debug(f"Starting intial run with 10 parents")
             results = run_genetic_test(
-                run_analysis_kwargs_list, metric=selection_metric
+                run_analysis_kwargs_list, metric=selection_metric, start_date=start_date
             )  # run the initial test
             logger.debug(f"Initial results: {results}")
             best_performers = results[:3]  # select the top 3 performers
-            best_parent = results[0]
             key_traits = [
                 "-AVG_PERIOD_2-",
                 "-AVG_PERIOD_1-",
@@ -1535,41 +1552,81 @@ def optimizer(
                 "-PUT_OR_CALL-",
                 "-IDV_WEEKDAY-",
             ]
-            for _ in range(
-                generations
-            ):  # run the genetic algorithm for the specified number of generations
+
+            # run the genetic algorithm for the specified number of generations
+            for _ in range(generations):
                 run_analysis_kwargs_list = []
-                for trait in key_traits:
-                    for _child in range(
-                        children
-                    ):  # create 5 childern that inherit this trait from the best_parent
-                        pre_select = {
-                            trait: best_parent["strategy_settings"][strat_name][trait]
-                        }
-                        settings = {
-                            strat_name: get_strat_settings_random(pre_select=pre_select)
-                        }
-                        run_analysis_threaded_kwargs = {
-                            "files_list": files_list,
-                            "results_queue": None,
-                            "cancel_flag": None,
-                            "strategy_settings": settings,
-                            "open_files": False,
-                            "create_excel": False,
-                        }
-                        run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
+                # we will spawn chidren for each of the top performers
+                for parent in best_performers:
+                    for trait in key_traits:
+                        # create childern that inherit all traits but 1 that will be mutated
+                        for _child in range(children):
+                            # copy the parent
+                            pre_select = parent["strategy_settings"][strat_name].copy()
+                            # remove the trait that we will mutate on
+                            del pre_select[trait]
+                            # get new mutated trait
+                            settings = {
+                                strat_name: get_strat_settings_random(
+                                    pre_select=pre_select
+                                )
+                            }
+                            # we need to make sure we haven't already used this configuration
+                            # if we have we will remove an inherited trait.
+                            available_traits = [x for x in key_traits if x != trait]
+                            counter = 0
+                            while settings in settings_history:
+                                if counter > 20:
+                                    if available_traits:
+                                        # we can't seem to find a new genetically diverse
+                                        # child to test.  Perhaps all possible combinations
+                                        # have been tested with this trait.
+                                        # lets remove an inherited trait and try again
+                                        removed_trait = random.choice(available_traits)
+                                        available_traits.remove(removed_trait)
+                                        del pre_select[removed_trait]
+                                        counter = 0
+                                    else:
+                                        # we removed all inherited traits and still cannot
+                                        # find a genetically different child.  We may have
+                                        # exhausted all possible combinations, so lets just
+                                        # continue with what we have so the test can finish
+                                        logger.debug(
+                                            f"Could not find a new genetically diffent configuration from has already been tested"
+                                        )
+                                        break
+                                # this configureation is already selected or has been tested
+                                # get new settings
+                                settings = {
+                                    strat_name: get_strat_settings_random(
+                                        pre_select=pre_select
+                                    )
+                                }
+                                counter += 1
+                            # add the settings to history
+                            settings_history.append(settings)
+                            # build the kwargs to run the analysis
+                            run_analysis_threaded_kwargs = {
+                                "files_list": files_list,
+                                "results_queue": None,
+                                "cancel_flag": None,
+                                "strategy_settings": settings,
+                                "open_files": False,
+                                "create_excel": False,
+                            }
+                            # add to list
+                            run_analysis_kwargs_list.append(
+                                run_analysis_threaded_kwargs
+                            )
                 results = run_genetic_test(
-                    run_analysis_kwargs_list, metric=selection_metric
+                    run_analysis_kwargs_list,
+                    metric=selection_metric,
+                    start_date=start_date,
                 )
-                # Add the new results to the best_performers list and sort it based on the metric
+                # Add the new results to the best_performers list and sort it based on the metric, select top 3
                 best_performers = sorted(
                     best_performers + results, key=lambda x: x["metric"], reverse=True
-                )[
-                    :3
-                ]  # select the top 3 performers
-                best_parent = best_performers[
-                    0
-                ]  # select the best parent for the next generation
+                )[:3]
             logger.debug(f"Best performers: {best_performers}")
     except Exception as e:
         results_queue.put(("-RUN_ANALYSIS_END-", e))
@@ -1860,8 +1917,8 @@ def walk_forward_test(
     df_dicts: dict = None,
     path: str = None,
     strategy_settings: dict = None,
-    start: dt.datetime.date = None,
-    end: dt.datetime.date = None,
+    start: dt.date = None,
+    end: dt.date = None,
     initial_value: float = 100_000,
     use_scaling=False,
     export_trades=False,
