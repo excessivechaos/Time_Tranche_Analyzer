@@ -27,6 +27,7 @@ import yfinance as yf
 from CSV_merger import main as csv_merger_window
 import seaborn as sns
 import copy
+import random
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -1356,9 +1357,55 @@ def calc_metric_wrapper(kwargs):
     return calc_metric(**kwargs)
 
 @with_gc
-def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, **kwargs):
+def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, generations: int=5, children: int=5, selection_metric: str='mar', **kwargs):
     setup_logging("ERROR")
     try:
+        def get_strat_settings_random(pre_select: dict = None, bp_per: float=6000) -> dict:
+            avg_periods = [x for x in range(1, 13)]
+            settings = {}
+            if pre_select: # 
+                settings.update(pre_select)
+            if "-AVG_PERIOD_2-" not in settings:
+                settings["-AVG_PERIOD_2-"] = random.choice(avg_periods)
+            if "-AVG_PERIOD_1-" not in settings:
+                settings["-AVG_PERIOD_1-"] = random.choice(max([x for x in range(1, settings["-AVG_PERIOD_2-"])], [1]))
+            if "-PERIOD_1_WEIGHT-" not in settings and "-PERIOD_2_WEIGHT-" not in settings:
+                settings["-PERIOD_1_WEIGHT-"] = random.choice([x for x in range(5, 101, 5)])
+                settings["-PERIOD_2_WEIGHT-"] = 100 - settings["-PERIOD_1_WEIGHT-"]
+            elif "-PERIOD_1_WEIGHT-" in settings and "-PERIOD_2_WEIGHT-" not in settings:
+                settings["-PERIOD_2_WEIGHT-"] = 100 - settings["-PERIOD_1_WEIGHT-"]
+            elif "-PERIOD_2_WEIGHT-" in settings and "-PERIOD_1_WEIGHT-" not in settings:
+                settings["-PERIOD_1_WEIGHT-"] = 100 - settings["-PERIOD_2_WEIGHT-"]
+            if "-TOP_X-" not in settings:
+                settings["-TOP_X-"] = random.choice([x for x in range(1, 16)])
+            if "-CALC_TYPE-" not in settings:
+                settings["-CALC_TYPE-"] = random.choice(["PCR", "PnL"])
+            if "-AGG_TYPE-" not in settings:
+                settings["-AGG_TYPE-"] = random.choice(["Monthly", "Semi-Monthly", "Weekly"])
+            if "-PUT_OR_CALL-" not in settings:
+                settings["-PUT_OR_CALL-"] = random.choice([True, False])
+            if "-IDV_WEEKDAY-" not in settings:
+                settings["-IDV_WEEKDAY-"] = random.choice([True, False])
+            # Non-random settings
+            settings["-MIN_TRANCHES-"] = settings["-TOP_X-"]
+            settings["-MAX_TRANCHES-"] = settings["-TOP_X-"]
+            settings["-BP_PER-"] = bp_per
+            settings["-PASSTHROUGH_MODE-"] = False
+            settings["-PORT_WEIGHT-"] = 100
+            settings["-TOP_TIME_THRESHOLD-"] = float("-inf")
+            settings["-APPLY_EXCLUSIONS-"] = "Both"
+            settings["-GAP_THRESHOLD-"] = 0
+            settings["-GAP_TYPE-"] = "%"
+            # Initialize option settings if they don't exist
+            for option in [
+                "-WEEKDAY_EXCLUSIONS-",
+                "-NEWS_EXCLUSIONS-",
+                "-AUTO_EXCLUSIONS-",
+                "-GAP_ANALYSIS-",
+            ]:
+                if option not in settings:
+                    settings[option] = []
+            return settings
         try:
             cpu_count = os.cpu_count()
         except Exception as e:
@@ -1366,11 +1413,39 @@ def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, 
             cpu_count = 2
         
         with Pool(processes=cpu_count) as pool:
-            strat_settings = {os.path.basename(files_list[0]): copy.deepcopy(strategy_settings["-SINGLE_MODE-"])}
+            def run_genetic_test(run_analysis_kwargs_list, metric='mar'):
+                analysis_results = pool.map(run_analysis_wrapper, run_analysis_kwargs_list)
+                for result in analysis_results:
+                    if isinstance(result, Exception):
+                        raise result
+                logger.debug(f"analysis results: {len(analysis_results)}")
+                wf_test_kwargs_list = []
+                for i in range(len(run_analysis_kwargs_list)):
+                    wf_test_kwargs = {
+                        "results_queue": None,
+                        "cancel_flag": None,
+                        "df_dicts": analysis_results[i],
+                        "path": "",
+                        "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"],
+                        "use_scaling": True,
+                    }
+                    wf_test_kwargs_list.append(wf_test_kwargs)
+                wf_test_results = pool.map(wf_test_wrapper, wf_test_kwargs_list)
+                for result in wf_test_results:
+                    if isinstance(result, Exception):
+                        raise result
+                logger.debug(f"wf test results: {len(wf_test_results)}")
+                calc_metric_kwargs_list = [{'results': wf_test_results[i], 'metric': metric} for i in range(len(wf_test_results))]
+                calc_metric_results = pool.map(calc_metric_wrapper, calc_metric_kwargs_list)
+                final_results = [{"metric":calc_metric_results[i], "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"]} for i in range(len(run_analysis_kwargs_list))]
+                best = sorted(final_results, key=lambda x: x["metric"], reverse=True)
+                logger.debug(best[0])
+                return best
+            
+            strat_name = os.path.basename(files_list[0])
             run_analysis_kwargs_list = []
-            for x in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
-                settings = copy.deepcopy(strat_settings)
-                settings["-AVG_PERIOD_1-"] = x
+            for _ in range(10): # create 10 random parents
+                settings = {strat_name: get_strat_settings_random()}
                 run_analysis_threaded_kwargs = {
                     "files_list": files_list,
                     "results_queue": None,
@@ -1380,32 +1455,32 @@ def optimizer(results_queue: Queue, cancel_flag, files_list, strategy_settings, 
                     "create_excel": False,
                 }
                 run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
-            analysis_results = pool.map(run_analysis_wrapper, run_analysis_kwargs_list)
-            for result in analysis_results:
-                if isinstance(result, Exception):
-                    raise result
-            logger.debug(f"analysis results: {len(analysis_results)}")
-            wf_test_kwargs_list = []
-            for i in range(len(run_analysis_kwargs_list)):
-                wf_test_kwargs = {
-                    "results_queue": None,
-                    "cancel_flag": None,
-                    "df_dicts": analysis_results[i],
-                    "path": "",
-                    "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"],
-                    "use_scaling": True,
-                }
-                wf_test_kwargs_list.append(wf_test_kwargs)
-            wf_test_results = pool.map(wf_test_wrapper, wf_test_kwargs_list)
-            for result in wf_test_results:
-                if isinstance(result, Exception):
-                    raise result
-            logger.debug(f"wf test results: {len(wf_test_results)}")
-            calc_metric_kwargs_list = [{'results': wf_test_results[i], 'metric': "mar"} for i in range(len(wf_test_results))]
-            calc_metric_results = pool.map(calc_metric_wrapper, calc_metric_kwargs_list)
-            final_results = [{"metric":calc_metric_results[i], "strategy_settings": run_analysis_kwargs_list[i]["strategy_settings"]} for i in range(len(run_analysis_kwargs_list))]
-            best = sorted(final_results, key=lambda x: x["metric"], reverse=True)[0]
-            logger.debug(best)
+            logger.debug(f"Starting intial run with 10 parents")
+            results = run_genetic_test(run_analysis_kwargs_list, metric=selection_metric)  # run the initial test
+            logger.debug(f"Initial results: {results}")
+            best_performers = results[:3]  # select the top 3 performers
+            best_parent = results[0]
+            key_traits = ["-AVG_PERIOD_2-", "-AVG_PERIOD_1-", "-PERIOD_1_WEIGHT-", "-TOP_X-", "-CALC_TYPE-", "-AGG_TYPE-", "-PUT_OR_CALL-", "-IDV_WEEKDAY-"]
+            for _ in range(generations): # run the genetic algorithm for the specified number of generations
+                run_analysis_kwargs_list = []
+                for trait in key_traits:
+                    for _child in range(children): # create 5 childern that inherit this trait from the best_parent
+                        pre_select = {trait: best_parent["strategy_settings"][strat_name][trait]}
+                        settings = {strat_name: get_strat_settings_random(pre_select=pre_select)}
+                        run_analysis_threaded_kwargs = {
+                            "files_list": files_list,
+                            "results_queue": None,
+                            "cancel_flag": None,
+                            "strategy_settings": settings,
+                            "open_files": False,
+                            "create_excel": False,
+                        }
+                        run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
+                results = run_genetic_test(run_analysis_kwargs_list, metric=selection_metric)
+                # Add the new results to the best_performers list and sort it based on the metric
+                best_performers = sorted(best_performers + results, key=lambda x: x["metric"], reverse=True)[:3]  # select the top 3 performers
+                best_parent = best_performers[0]  # select the best parent for the next generation
+            logger.debug(f"Best performers: {best_performers}")
     except Exception as e:
         results_queue.put(("-RUN_ANALYSIS_END-", e))
         logger.exception("Error in optimizer")
@@ -1719,13 +1794,9 @@ def walk_forward_test(
             # find the earliest end date passthrough doesn't matter here
             if _end_date < end_date:
                 end_date = _end_date
-
-        max_long_avg_period = max(
-            [
-                max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"])
-                for settings in strategy_settings.values()
-            ]
-        )
+        max_long_avg_period = 0
+        for settings in strategy_settings.values():
+            max_long_avg_period = max(max(settings["-AVG_PERIOD_1-"], settings["-AVG_PERIOD_2-"]), max_long_avg_period)
         date_adv = start_date + relativedelta(months=max_long_avg_period)
         warm_start = dt.date(date_adv.year, date_adv.month, 1)
         # use either the user input date or the first warmed up date
