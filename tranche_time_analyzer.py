@@ -4016,7 +4016,7 @@ def main():
                 # clear the current settings
                 strategy_settings.clear()
                 # set the new settings for single mode
-                strategy_settings["-SINGLE_MODE-"] = optimized_settings
+                strategy_settings[strat_name] = optimized_settings
                 # turn off port mode if it was on
                 if values["-PORTFOLIO_MODE-"]:
                     window["-PORTFOLIO_MODE-"].update(value=False)
@@ -4041,7 +4041,7 @@ def main():
                 # set the start date and end date for the later WF test
                 start_date = None
                 end_date = None
-
+                logger.debug(strategy_settings)
                 # run the analysis with the new settings
                 run_analysis_process = Process(
                     target=run_analysis_threaded,
