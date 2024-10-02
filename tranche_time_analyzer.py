@@ -1509,12 +1509,14 @@ def optimizer(
             logger.exception("Error retirieving CPU count")
             cpu_count = 2
 
+        total_tests = 0
         best_performers = []
         with Pool(processes=cpu_count) as pool:
 
             def run_genetic_test(
                 run_analysis_kwargs_list, metric="MAR", start_date: dt.date = None
             ):
+                nonlocal total_tests
                 analysis_results = pool.map(
                     run_analysis_wrapper, run_analysis_kwargs_list
                 )
@@ -1544,6 +1546,7 @@ def optimizer(
                     if isinstance(result, Exception):
                         raise result
                 logger.debug(f"wf test results: {len(wf_test_results)}")
+                total_tests += len(wf_test_results)
                 calc_metric_kwargs_list = [
                     {"results": wf_test_results[i], "metric": metric}
                     for i in range(len(wf_test_results))
@@ -1703,6 +1706,7 @@ def optimizer(
                     best_performers + results, key=lambda x: x["metric"], reverse=True
                 )[:3]
             logger.debug(f"Best performers: {best_performers}")
+        logger.debug(f"Total test run: {total_tests}")
         results_queue.put(("-OPTIMIZER-", best_performers[0]))
         return best_performers[0]
     except Exception as e:
@@ -3957,11 +3961,22 @@ def main():
                 # turn on backtest and scaling
                 window["-BACKTEST-"].update(value=True)
                 window["-SCALING-"].update(value=True)
+
+                # get the complete file path
+                file_list = values["-FILE-"].split(";")
+                dir_name = os.path.dirname(file_list[0])
+                file = os.path.join(dir_name, strat_name)
+                logger.debug(f"File: {file}")
+
+                # set the start date and end date for the later WF test
+                start_date = None
+                end_date = None
+
                 # run the analysis with the new settings
                 run_analysis_process = Process(
                     target=run_analysis_threaded,
                     kwargs={
-                        "files_list": [strat_name],
+                        "files_list": [file],
                         "strategy_settings": strategy_settings,
                         "open_files": values["-OPEN_FILES-"],
                         "results_queue": results_queue,
