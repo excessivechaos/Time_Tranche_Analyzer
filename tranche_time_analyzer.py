@@ -2877,11 +2877,11 @@ def optimizer_window(files_list, app_settings) -> None:
     time_per_test = float(app_settings["-TIME_PER_TEST-"])
     text = (
         "This will perform an optomization of TTA settings using a genetic algorithm. "
-        "First 10 parents will be created using randomly select settings/traits. The "
+        "First n parents will be created using randomly select settings/traits. The "
         "walk-forward test will be performed for each confirguration and the top  3 "
-        "perfoming parents will be selected. These parents will spawn several children "
+        "perfoming parents will be selected. These parents + 1 additional random parent will spawn several children "
         "each inheriting their traits from the parent. Next the children will have one "
-        "or more of their traits mutated with a new random value. The top  performers "
+        "or more of their traits mutated with a new random value. The top performers "
         "from the child generation will then be chosen as parents to the next generation. "
         "This will continue for however many generations are chosen. Use the selection "
         "preference to set the metric (e.g. MAR, Sharpe, CAGR) that will be used  for "
@@ -3019,7 +3019,7 @@ def optimizer_window(files_list, app_settings) -> None:
         try:
             total_tests = int(values["-GENERATIONS-"]) * int(
                 values["-CHILDREN-"]
-            ) * 3 + int(values["-PARENTS-"])
+            ) * 4 + int(values["-PARENTS-"])
             window["-TOTAL_TESTS-"].update(total_tests)
             total_time = total_tests * time_per_test
             secs = total_time % 60
