@@ -1363,6 +1363,57 @@ def load_data(
     )
 
 
+def calc_metric(results: dict = None, metric: str = None):
+    """Calc a certain metric for a single strategy"""
+    df = list(results.values())[0]
+    # Calculate summary statistics for the strategy
+    final_value = df["Current Value"].iloc[-1]
+    max_dd = df["Max DD"].max()
+    if metric == "Drawdown%":
+        return max_dd
+    dd_days = df["DD Days"].max()
+    if metric == "Days in Drawdown":
+        return dd_days
+    initial_value = df["Initial Value"].min()
+    total_return = (final_value - initial_value) / initial_value
+    if metric == "Total Return":
+        return total_return
+    # CAGR
+    start_dt = df["Date"].iloc[0]
+    end_dt = df["Date"].iloc[-1]
+    years = (end_dt - start_dt).days / 365.25
+    cagr = ((final_value / initial_value) ** (1 / years)) - 1
+    if metric == "CAGR":
+        return cagr
+
+    # Sharpe Ratio
+    df["Daily Return"] = df["Current Value"].pct_change()
+    std_dev = df["Daily Return"].std()
+    risk_free_rate = 0.02 / 252  # Assume 2% annual risk-free rate, convert to daily
+    excess_returns = df["Daily Return"] - risk_free_rate
+    sharpe_ratio = np.sqrt(252) * excess_returns.mean() / std_dev  # Annualized
+    if metric == "Sharpe":
+        return sharpe_ratio
+    if max_dd:
+        mar = cagr / max_dd
+    else:
+        mar = float("inf")
+    if metric == "MAR":
+        return mar
+
+    # Group PnL by month
+    df["YearMonth"] = df["Date"].dt.to_period("M")
+    monthly_pnl = df.groupby("YearMonth")["Day PnL"].sum()
+
+    # Calculate largest and lowest monthly PnL with their corresponding dates
+    largest_monthly_pnl = monthly_pnl.max()
+    if metric == "Largest Month":
+        return largest_monthly_pnl
+    lowest_monthly_pnl = monthly_pnl.min()
+    if metric == "Smallest Month":
+        return lowest_monthly_pnl
+
+
 def run_analysis_wrapper(kwargs):
     return run_analysis_threaded(**kwargs)
 
@@ -1377,15 +1428,11 @@ def calc_metric_wrapper(kwargs):
 
 @with_gc
 def optimizer(
-    results_queue: Queue,
-    cancel_flag,
-    files_list,
-    strategy_settings,
+    file,
     generations: int = 3,
     children: int = 5,
-    selection_metric: str = "mar",
+    selection_metric: str = "MAR",
     start_date: dt.date = dt.date(2023, 1, 1),
-    **kwargs,
 ):
     setup_logging("ERROR")
     try:
@@ -1462,10 +1509,11 @@ def optimizer(
             logger.exception("Error retirieving CPU count")
             cpu_count = 2
 
+        best_performers = []
         with Pool(processes=cpu_count) as pool:
 
             def run_genetic_test(
-                run_analysis_kwargs_list, metric="mar", start_date: dt.date = None
+                run_analysis_kwargs_list, metric="MAR", start_date: dt.date = None
             ):
                 analysis_results = pool.map(
                     run_analysis_wrapper, run_analysis_kwargs_list
@@ -1488,6 +1536,9 @@ def optimizer(
                         "start": start_date,
                     }
                     wf_test_kwargs_list.append(wf_test_kwargs)
+                # Check for cancel flag
+                if cancel_flag is not None and cancel_flag.is_set():
+                    return
                 wf_test_results = pool.map(wf_test_wrapper, wf_test_kwargs_list)
                 for result in wf_test_results:
                     if isinstance(result, Exception):
@@ -1497,6 +1548,9 @@ def optimizer(
                     {"results": wf_test_results[i], "metric": metric}
                     for i in range(len(wf_test_results))
                 ]
+                # Check for cancel flag
+                if cancel_flag is not None and cancel_flag.is_set():
+                    return
                 calc_metric_results = pool.map(
                     calc_metric_wrapper, calc_metric_kwargs_list
                 )
@@ -1514,7 +1568,7 @@ def optimizer(
                 return best
 
             settings_history = []
-            strat_name = os.path.basename(files_list[0])
+            strat_name = os.path.basename(file)
             run_analysis_kwargs_list = []
             for _ in range(10):  # create 10 random parents
                 settings = {strat_name: get_strat_settings_random()}
@@ -1528,7 +1582,7 @@ def optimizer(
                 # add the settings to history
                 settings_history.append(settings)
                 run_analysis_threaded_kwargs = {
-                    "files_list": files_list,
+                    "files_list": [file],
                     "results_queue": None,
                     "cancel_flag": None,
                     "strategy_settings": settings,
@@ -1537,9 +1591,22 @@ def optimizer(
                 }
                 run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
             logger.debug(f"Starting intial run with 10 parents")
+
+            # Check for cancel flag before running tests
+            if cancel_flag is not None and cancel_flag.is_set():
+                cancel_flag.clear()
+                if results_queue:
+                    results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
+                return
             results = run_genetic_test(
                 run_analysis_kwargs_list, metric=selection_metric, start_date=start_date
             )  # run the initial test
+            # Check for cancel flag again in case it happened during
+            if cancel_flag is not None and cancel_flag.is_set():
+                cancel_flag.clear()
+                if results_queue:
+                    results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
+                return
             logger.debug(f"Initial results: {results}")
             best_performers = results[:3]  # select the top 3 performers
             key_traits = [
@@ -1558,76 +1625,86 @@ def optimizer(
                 run_analysis_kwargs_list = []
                 # we will spawn chidren for each of the top performers
                 for parent in best_performers:
-                    for trait in key_traits:
-                        # create childern that inherit all traits but 1 that will be mutated
-                        for _child in range(children):
-                            # copy the parent
-                            pre_select = parent["strategy_settings"][strat_name].copy()
-                            # remove the trait that we will mutate on
-                            del pre_select[trait]
-                            # get new mutated trait
+                    # create childern that inherit all traits but 1 that will be mutated
+                    for _child in range(children):
+                        trait = random.choice(key_traits)
+                        # copy the parent
+                        pre_select = parent["strategy_settings"][strat_name].copy()
+                        # remove the trait that we will mutate on
+                        del pre_select[trait]
+                        # get new mutated trait
+                        settings = {
+                            strat_name: get_strat_settings_random(pre_select=pre_select)
+                        }
+                        # we need to make sure we haven't already used this configuration
+                        # if we have we will remove an inherited trait.
+                        available_traits = [x for x in key_traits if x != trait]
+                        counter = 0
+                        while settings in settings_history:
+                            if counter > 20:
+                                if available_traits:
+                                    # we can't seem to find a new genetically diverse
+                                    # child to test.  Perhaps all possible combinations
+                                    # have been tested with this trait.
+                                    # lets remove an inherited trait and try again
+                                    removed_trait = random.choice(available_traits)
+                                    available_traits.remove(removed_trait)
+                                    del pre_select[removed_trait]
+                                    counter = 0
+                                else:
+                                    # we removed all inherited traits and still cannot
+                                    # find a genetically different child.  We may have
+                                    # exhausted all possible combinations, so lets just
+                                    # continue with what we have so the test can finish
+                                    logger.debug(
+                                        f"Could not find a new genetically diffent configuration from has already been tested"
+                                    )
+                                    break
+                            # this configureation is already selected or has been tested
+                            # get new settings
                             settings = {
                                 strat_name: get_strat_settings_random(
                                     pre_select=pre_select
                                 )
                             }
-                            # we need to make sure we haven't already used this configuration
-                            # if we have we will remove an inherited trait.
-                            available_traits = [x for x in key_traits if x != trait]
-                            counter = 0
-                            while settings in settings_history:
-                                if counter > 20:
-                                    if available_traits:
-                                        # we can't seem to find a new genetically diverse
-                                        # child to test.  Perhaps all possible combinations
-                                        # have been tested with this trait.
-                                        # lets remove an inherited trait and try again
-                                        removed_trait = random.choice(available_traits)
-                                        available_traits.remove(removed_trait)
-                                        del pre_select[removed_trait]
-                                        counter = 0
-                                    else:
-                                        # we removed all inherited traits and still cannot
-                                        # find a genetically different child.  We may have
-                                        # exhausted all possible combinations, so lets just
-                                        # continue with what we have so the test can finish
-                                        logger.debug(
-                                            f"Could not find a new genetically diffent configuration from has already been tested"
-                                        )
-                                        break
-                                # this configureation is already selected or has been tested
-                                # get new settings
-                                settings = {
-                                    strat_name: get_strat_settings_random(
-                                        pre_select=pre_select
-                                    )
-                                }
-                                counter += 1
-                            # add the settings to history
-                            settings_history.append(settings)
-                            # build the kwargs to run the analysis
-                            run_analysis_threaded_kwargs = {
-                                "files_list": files_list,
-                                "results_queue": None,
-                                "cancel_flag": None,
-                                "strategy_settings": settings,
-                                "open_files": False,
-                                "create_excel": False,
-                            }
-                            # add to list
-                            run_analysis_kwargs_list.append(
-                                run_analysis_threaded_kwargs
-                            )
+                            counter += 1
+                        # add the settings to history
+                        settings_history.append(settings)
+                        # build the kwargs to run the analysis
+                        run_analysis_threaded_kwargs = {
+                            "files_list": [file],
+                            "results_queue": None,
+                            "cancel_flag": None,
+                            "strategy_settings": settings,
+                            "open_files": False,
+                            "create_excel": False,
+                        }
+                        # add to list
+                        run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
+                # Check for cancel flag before running tests
+                if cancel_flag is not None and cancel_flag.is_set():
+                    cancel_flag.clear()
+                    if results_queue:
+                        results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
+                    return
                 results = run_genetic_test(
                     run_analysis_kwargs_list,
                     metric=selection_metric,
                     start_date=start_date,
                 )
+                # Check for cancel flag again in case it happened during
+                if cancel_flag is not None and cancel_flag.is_set():
+                    cancel_flag.clear()
+                    if results_queue:
+                        results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
+                    return
                 # Add the new results to the best_performers list and sort it based on the metric, select top 3
                 best_performers = sorted(
                     best_performers + results, key=lambda x: x["metric"], reverse=True
                 )[:3]
             logger.debug(f"Best performers: {best_performers}")
+        results_queue.put(("-OPTIMIZER-", best_performers[0]))
+        return best_performers[0]
     except Exception as e:
         results_queue.put(("-RUN_ANALYSIS_END-", e))
         logger.exception("Error in optimizer")
@@ -1667,7 +1744,7 @@ def resize_base64_image(base64_image, desired_height):
 
 @with_gc
 def run_analysis_threaded(
-    files_list="",
+    files_list=[],
     strategy_settings={},
     open_files=False,
     results_queue: Queue = None,
@@ -2735,6 +2812,129 @@ def options_window(settings) -> None:
     Checkbox.clear_elements()
 
 
+def optimizer_window(files_list) -> None:
+    dpi_scale = get_dpi_scale()
+    layout = [
+        [
+            sg.Text(
+                (
+                    "This will perform an optomization of TTA settings using a genetic algorithm.\n"
+                    "First 10 parents will be created using randomly select settings/traits. The\n"
+                    "walk-forward test will be performed for each confirguration and the top  3\n"
+                    "perfoming parents will be selected. These parents will spawn several children\n"
+                    "each inheriting their traits from the parent. Next the children will have one\n"
+                    "or more of their traits mutated with a new random value. The top  performers\n"
+                    "from the child generation will then be chosen as parents to the next generation.\n"
+                    "This will continue for however many generations are chosen. Use the selection\n"
+                    "preference to set the metric (e.g. MAR, Sharpe, CAGR) that will be used  for\n"
+                    "determining the top performers. At the the end of the test, the top settings\n"
+                    "will be displayed in a popup window and the final test will be set in the TTA\n"
+                    "window and shown in the graphs for review."
+                ),
+                font=font,
+            ),
+        ],
+        [
+            sg.Text(
+                (
+                    "Warning: This optimization is very time consuming,"
+                    + "\nespecially with a high number of generations or children"
+                ),
+                font=(font[0], font[1] + 2),
+            )
+        ],
+        [
+            sg.Text("File to optimize:", font=font),
+            sg.Combo(
+                files_list,
+                default_value=files_list[0],
+                key="-FILE-",
+                readonly=True,
+                size=(50, 1),
+                font=font,
+            ),
+        ],
+        [
+            sg.Text("Number of Generations:", font=font),
+            sg.Input(default_text="10", key="-GENERATIONS-", size=(5, 1), font=font),
+        ],
+        [
+            sg.Text("Number of Children:", font=font),
+            sg.Input(default_text="5", key="-CHILDREN-", size=(5, 1), font=font),
+        ],
+        [
+            sg.Text("Selection Preference:", font=font),
+            sg.Combo(
+                [
+                    "MAR",
+                    "Sharpe",
+                    "CAGR",
+                    "Drawdown%",
+                    "Days in Drawdown",
+                    "Total Return",
+                    "Largest Month",
+                    "Smallest Month",
+                ],
+                default_value="MAR",
+                key="-FILE-",
+                readonly=True,
+                size=(50, 1),
+                font=font,
+            ),
+        ],
+        [sg.Button("Start", font=font), sg.Button("Cancel", font=font)],
+    ]
+
+    window = sg.Window(
+        "Optimizer",
+        layout,
+        no_titlebar=False,
+        # size=window_size,
+        finalize=True,
+        modal=True,
+        resizable=True,
+    )
+    # Checkbox.initial(window)
+    # let window be made so the length is auto set
+    # the width always fills the screen when using the custom
+    # checkbox class, so we need to change the size.  Allowing
+    # the window to self size first we can get the correct height
+    window_height = window.size[1]
+    window_width = int(650 * dpi_scale)
+    window.TKroot.geometry(f"{window_width}x{window_height}")
+
+    # Now we need to move the window since it opens all the way left.
+    # We will position it at the cursor location since the options button is on the right
+    mouse_x = window.TKroot.winfo_pointerx()
+    mouse_y = window.TKroot.winfo_pointery()
+    x_cordinate = mouse_x - window_width
+    y_cordinate = mouse_y
+
+    # Ensure the window is fully visible
+    x_cordinate = max(0, min(x_cordinate, screen_size[0] - window_width))
+    y_cordinate = max(0, min(y_cordinate, screen_size[1] - window_height))
+
+    # Set the window position
+    window.TKroot.geometry(f"+{x_cordinate}+{y_cordinate}")
+    optimizer_thread = None
+    while True:
+        event, values = window.read()
+        if event in (sg.WIN_CLOSED, "Cancel"):
+            break
+        elif event == "Start":
+            optimizer_thread = threading.Thread(
+                target=optimizer,
+                kwargs={
+                    "file": values["-FILE-"],
+                    "generations": values["-GENERATIONS-"],
+                    "children": values["-CHILDREN-"],
+                },
+            )
+            optimizer_thread.start()
+    window.close()
+    return optimizer_thread
+
+
 def main():
     global news_events_loaded, news_events
     setup_logging("ERROR")
@@ -2989,6 +3189,7 @@ def main():
                 ),
                 sg.pin(sg.Button("Cancel", pad=(20, 0), visible=False)),
                 sg.Push(),
+                sg.Button("Optimizer"),
                 sg.Button("CSV Merger"),
                 sg.Combo(
                     list(themes),
@@ -3375,6 +3576,8 @@ def main():
 
         elif event == "Analyze":
             files_list = values["-FILE-"].split(";")
+            if "" in files_list:
+                files_list.remove("")
             for file in files_list:
                 file_ext = os.path.splitext(file)[1].lower()
                 if file_ext != ".csv":
@@ -3386,7 +3589,9 @@ def main():
             if error:
                 error = False  # reset
                 continue
-
+            if not files_list:
+                sg.popup_no_border("Please Browse for a file first")
+                continue
             if values["-PORTFOLIO_MODE-"]:
                 selected_strategy = values["-STRATEGY_SELECT-"]
             else:
@@ -3431,8 +3636,8 @@ def main():
             window["-PROGRESS-"].update(visible=True)
             window["Analyze"].update("Working...", disabled=True)
             window["Cancel"].update(visible=True)
-            run_analysis_process = threading.Thread(
-                target=optimizer,  # run_analysis_threaded,
+            run_analysis_process = Process(
+                target=run_analysis_threaded,
                 kwargs={
                     "files_list": files_list,
                     "strategy_settings": strategy_settings,
@@ -3563,6 +3768,30 @@ def main():
         elif event == "-CALC_TYPE-":
             window["-CALC_TYPE_TEXT-"].update(values["-CALC_TYPE-"])
 
+        elif event == "Optimizer":
+            files_list = values["-FILE-"].split(";")
+            if "" in files_list:
+                files_list.remove("")
+            for file in files_list:
+                file_ext = os.path.splitext(file)[1].lower()
+                if file_ext != ".csv":
+                    sg.popup_no_border(
+                        "One or more of the selected files\ndo not appear to be a csv file!"
+                    )
+                    error = True
+                    break
+            if error:
+                error = False  # reset
+                continue
+            if not files_list:
+                sg.popup_no_border("Please Browse for a file first")
+                continue
+            optimizer_thread = optimizer_window(files_list)
+            if optimizer_thread:
+                window["-PROGRESS-"].update(visible=True)
+                window["Analyze"].update("Working...", disabled=True)
+                window["Cancel"].update(visible=True)
+                test_running = True
         # Update strategy settings when values change but not while analysis is running
         if (
             values["-PORTFOLIO_MODE-"]
@@ -3702,11 +3931,53 @@ def main():
                 window = new_window
                 continue
 
+            elif result_key == "-OPTIMIZER-":
+                strat_name = list(results["strategy_settings"].keys())[0]
+                optimized_settings = results["strategy_settings"][strat_name]
+                # update the settings in the window
+                for key, value in optimized_settings.items():
+                    if key in window.AllKeysDict:
+                        window[key].update(format_float(value))
+                # clear the current settings
+                strategy_settings.clear()
+                # set the new settings for single mode
+                strategy_settings["-SINGLE_MODE-"] = optimized_settings
+                # turn off port mode if it was on
+                if values["-PORTFOLIO_MODE-"]:
+                    window["-PORTFOLIO_MODE-"].update(value=False)
+                    for key in [
+                        "-STRATEGY_SELECT-",
+                        "-PASSTHROUGH_MODE-",
+                        "-PORT_WEIGHT_TEXT1-",
+                        "-PORT_WEIGHT-",
+                        "-PORT_WEIGHT_TEXT2-",
+                    ]:
+                        window[key].update(visible=False)
+                # turn on backtest and scaling
+                window["-BACKTEST-"].update(value=True)
+                window["-SCALING-"].update(value=True)
+                # run the analysis with the new settings
+                run_analysis_process = Process(
+                    target=run_analysis_threaded,
+                    kwargs={
+                        "files_list": [strat_name],
+                        "strategy_settings": strategy_settings,
+                        "open_files": values["-OPEN_FILES-"],
+                        "results_queue": results_queue,
+                        "cancel_flag": cancel_flag,
+                        "create_excel": True,
+                    },
+                )
+                run_analysis_process.start()
+                continue
+
             elif result_key == "-BACKTEST_CANCELED-":
                 if results == "-RUN_ANALYSIS-":
                     run_analysis_process.join()
                 elif results == "-WALK_FORWARD-":
                     wf_test_process.join()
+                elif results == "-OPTIMIZER-":
+                    optimizer_thread.join()
                 window["-PROGRESS-"].update(visible=False)
                 window["Cancel"].update("Cancel", disabled=False, visible=False)
                 window["Analyze"].update("Analyze", disabled=False)
