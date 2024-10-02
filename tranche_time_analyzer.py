@@ -1659,12 +1659,16 @@ def optimizer(
                     # create childern that inherit all but up to 3 traits that will be mutated
                     for _child in range(children):
                         # how many traits to mutate
-                        traits = random.sample(key_traits, k=random.randint(1, 3))
+                        mutated_traits = random.sample(
+                            key_traits, k=random.randint(1, 3)
+                        )
                         # copy the parent
                         pre_select = copy.deepcopy(
                             parent["strategy_settings"][strat_name]
                         )
-                        for trait in traits:  # remove the trait that we will mutate on
+                        for (
+                            trait
+                        ) in mutated_traits:  # remove the trait that we will mutate on
                             del pre_select[trait]
                         # get new mutated traits
                         settings = {
@@ -1672,14 +1676,16 @@ def optimizer(
                         }
                         # we need to make sure we haven't already used this configuration
                         # if we have we will remove an inherited trait.
-                        available_traits = [x for x in key_traits if x != trait]
+                        available_traits = [
+                            x for x in key_traits if x not in mutated_traits
+                        ]
                         counter = 0
                         while settings in settings_history:
-                            if counter > 20:
+                            if counter > 99:
                                 if available_traits:
                                     # we can't seem to find a new genetically diverse
                                     # child to test.  Perhaps all possible combinations
-                                    # have been tested with this trait.
+                                    # have been tested with these mutated traits.
                                     # lets remove an inherited trait and try again
                                     removed_trait = random.choice(available_traits)
                                     available_traits.remove(removed_trait)
@@ -1691,7 +1697,7 @@ def optimizer(
                                     # exhausted all possible combinations, so lets just
                                     # continue with what we have so the test can finish
                                     logger.debug(
-                                        f"Could not find a new genetically diffent configuration from has already been tested"
+                                        f"Could not find a new genetically diffent configuration from what has already been tested"
                                     )
                                     break
                             # this configureation is already selected or has been tested
