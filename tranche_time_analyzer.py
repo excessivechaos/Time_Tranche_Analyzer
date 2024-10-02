@@ -28,6 +28,7 @@ from CSV_merger import main as csv_merger_window
 import seaborn as sns
 import copy
 import random
+import textwrap
 
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
@@ -1270,7 +1271,7 @@ def is_BYOB_data(df: pd.DataFrame) -> bool:
 def load_data(
     file: str,
     weekday_exclusions: list = [],
-) -> Tuple[pd.DataFrame, dt.datetime.date, dt.datetime.date]:
+) -> Tuple[pd.DataFrame, dt.date, dt.date]:
     """
     Takes a Trade Log CSV from either Option Omega or BYOB
     and returns a dataframe containing the trade data and
@@ -1432,10 +1433,17 @@ def optimizer(
     generations: int = 3,
     children: int = 5,
     selection_metric: str = "MAR",
-    start_date: dt.date = dt.date(2023, 1, 1),
+    parents: int = 10,
 ):
     setup_logging("ERROR")
     try:
+        reverse_sort = selection_metric in [
+            "MAR",
+            "Sharpe",
+            "CAGR",
+            "Total Return",
+            "Largest Month",
+        ]
 
         def get_strat_settings_random(
             pre_select: dict = None, bp_per: float = 6000
@@ -1504,13 +1512,21 @@ def optimizer(
             return settings
 
         try:
-            cpu_count = os.cpu_count()
+            # we will use all but 1 cpu, so hopefully the host
+            # other programs will not slow too much.
+            cpu_count = max(os.cpu_count() - 1, 1)
         except Exception as e:
             logger.exception("Error retirieving CPU count")
             cpu_count = 2
 
+        # load the df to get the start date
+        _df, start_date, _end_date = load_data(file)
+        # set the start date for the WF test to 12mo later so we
+        # have a normalized and warmed up start point for all tests
+        start_date = start_date + relativedelta(months=12)
         total_tests = 0
         best_performers = []
+        start_time = time.time()
         with Pool(processes=cpu_count) as pool:
 
             def run_genetic_test(
@@ -1566,14 +1582,16 @@ def optimizer(
                     }
                     for i in range(len(run_analysis_kwargs_list))
                 ]
-                best = sorted(final_results, key=lambda x: x["metric"], reverse=True)
+                best = sorted(
+                    final_results, key=lambda x: x["metric"], reverse=reverse_sort
+                )
                 logger.debug(best[0])
                 return best
 
             settings_history = []
             strat_name = os.path.basename(file)
             run_analysis_kwargs_list = []
-            for _ in range(10):  # create 10 random parents
+            for _ in range(parents):  # create n random parents
                 settings = {strat_name: get_strat_settings_random()}
                 while settings in settings_history:
                     # this configureation is already in or been tested
@@ -1593,7 +1611,7 @@ def optimizer(
                     "create_excel": False,
                 }
                 run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
-            logger.debug(f"Starting intial run with 10 parents")
+            logger.debug(f"Starting intial run with {parents} parents")
 
             # Check for cancel flag before running tests
             if cancel_flag is not None and cancel_flag.is_set():
@@ -1703,12 +1721,21 @@ def optimizer(
                     return
                 # Add the new results to the best_performers list and sort it based on the metric, select top 3
                 best_performers = sorted(
-                    best_performers + results, key=lambda x: x["metric"], reverse=True
+                    best_performers + results,
+                    key=lambda x: x["metric"],
+                    reverse=reverse_sort,
                 )[:3]
             logger.debug(f"Best performers: {best_performers}")
-        logger.debug(f"Total test run: {total_tests}")
-        results_queue.put(("-OPTIMIZER-", best_performers[0]))
-        return best_performers[0]
+
+        total_time = time.time() - start_time
+        time_per_test = total_time / total_tests
+        logger.debug(
+            f"Total tests run: {total_tests} - Total Run Time: {total_time} - Time per test: {time_per_test:.3f}"
+        )
+        best_performer = best_performers[0]
+        best_performer["time_per_test"] = time_per_test
+        results_queue.put(("-OPTIMIZER-", best_performer))
+        return best_performer
     except Exception as e:
         results_queue.put(("-RUN_ANALYSIS_END-", e))
         logger.exception("Error in optimizer")
@@ -1827,7 +1854,8 @@ def run_analysis_threaded(
 
 def save_settings(settings, settings_filename, values):
     for key in settings:
-        settings[key] = values[key]
+        if key in values:
+            settings[key] = values[key]
     os.makedirs(os.path.dirname(settings_filename), exist_ok=True)
     with open(settings_filename, "w") as f:
         json.dump(settings, f, indent=4)
@@ -1877,6 +1905,8 @@ def set_default_app_settings(app_settings):
         app_settings["-PORTFOLIO_MODE-"] = False
     if "-TOP_TIME_THRESHOLD-" not in app_settings:
         app_settings["-TOP_TIME_THRESHOLD-"] = ""
+    if "-TIME_PER_TEST-" not in app_settings:
+        app_settings["-TIME_PER_TEST-"] = "120"
 
 
 def setup_logging(log_level):
@@ -2816,28 +2846,26 @@ def options_window(settings) -> None:
     Checkbox.clear_elements()
 
 
-def optimizer_window(files_list) -> None:
+def optimizer_window(files_list, app_settings) -> None:
     dpi_scale = get_dpi_scale()
+    time_per_test = float(app_settings["-TIME_PER_TEST-"])
+    text = (
+        "This will perform an optomization of TTA settings using a genetic algorithm. "
+        "First 10 parents will be created using randomly select settings/traits. The "
+        "walk-forward test will be performed for each confirguration and the top  3 "
+        "perfoming parents will be selected. These parents will spawn several children "
+        "each inheriting their traits from the parent. Next the children will have one "
+        "or more of their traits mutated with a new random value. The top  performers "
+        "from the child generation will then be chosen as parents to the next generation. "
+        "This will continue for however many generations are chosen. Use the selection "
+        "preference to set the metric (e.g. MAR, Sharpe, CAGR) that will be used  for "
+        "determining the top performers. At the the end of the test, the top settings "
+        "will be displayed in a popup window and the final test will be set in the TTA "
+        "window and shown in the graphs for review."
+    )
+    wrapped_text = textwrap.fill(text, width=88)
     layout = [
-        [
-            sg.Text(
-                (
-                    "This will perform an optomization of TTA settings using a genetic algorithm.\n"
-                    "First 10 parents will be created using randomly select settings/traits. The\n"
-                    "walk-forward test will be performed for each confirguration and the top  3\n"
-                    "perfoming parents will be selected. These parents will spawn several children\n"
-                    "each inheriting their traits from the parent. Next the children will have one\n"
-                    "or more of their traits mutated with a new random value. The top  performers\n"
-                    "from the child generation will then be chosen as parents to the next generation.\n"
-                    "This will continue for however many generations are chosen. Use the selection\n"
-                    "preference to set the metric (e.g. MAR, Sharpe, CAGR) that will be used  for\n"
-                    "determining the top performers. At the the end of the test, the top settings\n"
-                    "will be displayed in a popup window and the final test will be set in the TTA\n"
-                    "window and shown in the graphs for review."
-                ),
-                font=font,
-            ),
-        ],
+        [sg.Text(wrapped_text, font=font)],
         [
             sg.Text(
                 (
@@ -2845,6 +2873,7 @@ def optimizer_window(files_list) -> None:
                     + "\nespecially with a high number of generations or children"
                 ),
                 font=(font[0], font[1] + 2),
+                text_color="red",
             )
         ],
         [
@@ -2854,20 +2883,24 @@ def optimizer_window(files_list) -> None:
                 default_value=files_list[0],
                 key="-FILE-",
                 readonly=True,
-                size=(50, 1),
                 font=font,
+                expand_x=True,
             ),
         ],
         [
-            sg.Text("Number of Generations:", font=font),
+            sg.Text("Number of Initial Parents:", font=font, size=(23, 1)),
+            sg.Input(default_text="10", key="-PARENTS-", size=(5, 1), font=font),
+        ],
+        [
+            sg.Text("Number of Generations:", font=font, size=(23, 1)),
             sg.Input(default_text="10", key="-GENERATIONS-", size=(5, 1), font=font),
         ],
         [
-            sg.Text("Number of Children:", font=font),
+            sg.Text("Number of Children:", font=font, size=(23, 1)),
             sg.Input(default_text="5", key="-CHILDREN-", size=(5, 1), font=font),
         ],
         [
-            sg.Text("Selection Preference:", font=font),
+            sg.Text("Selection Preference:", font=font, size=(23, 1)),
             sg.Combo(
                 [
                     "MAR",
@@ -2880,12 +2913,21 @@ def optimizer_window(files_list) -> None:
                     "Smallest Month",
                 ],
                 default_value="MAR",
-                key="-FILE-",
+                key="-SELECTION_METRIC-",
                 readonly=True,
-                size=(50, 1),
+                size=(15, 1),
                 font=font,
             ),
         ],
+        [
+            sg.Text("Total Tests to Run:", font=font),
+            sg.Text("", font=font, key="-TOTAL_TESTS-"),
+        ],
+        [
+            sg.Text("Estimated Run Time:", font=font),
+            sg.Text("", font=font, key="-RUN_TIME-"),
+        ],
+        [sg.Text("Note: Estimated time will improve after each run", font=font)],
         [sg.Button("Start", font=font), sg.Button("Cancel", font=font)],
     ]
 
@@ -2922,20 +2964,45 @@ def optimizer_window(files_list) -> None:
     window.TKroot.geometry(f"+{x_cordinate}+{y_cordinate}")
     optimizer_thread = None
     while True:
-        event, values = window.read()
+        event, values = window.read(timeout=100)
         if event in (sg.WIN_CLOSED, "Cancel"):
             break
+
         elif event == "Start":
+            try:
+                gernerations = int(values["-GENERATIONS-"])
+                children = int(values["-CHILDREN-"])
+                parents = int(values["-PARENTS-"])
+            except ValueError:
+                sg.popup_no_border(
+                    "Please correct number of generations, children, and parents values"
+                )
+                continue
             optimizer_thread = threading.Thread(
                 target=optimizer,
                 kwargs={
                     "file": values["-FILE-"],
-                    "generations": int(values["-GENERATIONS-"]),
-                    "children": int(values["-CHILDREN-"]),
+                    "generations": gernerations,
+                    "children": children,
+                    "parents": parents,
+                    "selection_metric": values["-SELECTION_METRIC-"],
                 },
             )
             optimizer_thread.start()
             break
+        try:
+            total_tests = int(values["-GENERATIONS-"]) * int(
+                values["-CHILDREN-"]
+            ) * 3 + int(values["-PARENTS-"])
+            window["-TOTAL_TESTS-"].update(total_tests)
+            total_time = total_tests * time_per_test
+            secs = total_time % 60
+            mins = (total_time // 60) % 60
+            hours = total_time // 3600
+            window["-RUN_TIME-"].update(f"{hours:.0f}h:{mins:.0f}m:{secs:.0f}s")
+        except ValueError:
+            window["-TOTAL_TESTS-"].update("")
+            window["-RUN_TIME-"].update("")
     window.close()
     return optimizer_thread
 
@@ -3791,7 +3858,7 @@ def main():
             if not files_list:
                 sg.popup_no_border("Please Browse for a file first")
                 continue
-            optimizer_thread = optimizer_window(files_list)
+            optimizer_thread = optimizer_window(files_list, app_settings)
             if optimizer_thread:
                 window["-PROGRESS-"].update(visible=True)
                 window["Analyze"].update("Working...", disabled=True)
@@ -3943,6 +4010,9 @@ def main():
                 for key, value in optimized_settings.items():
                     if key in window.AllKeysDict:
                         window[key].update(format_float(value))
+                    # update the values dict for later use
+                    if key in values:
+                        values[key] = value
                 # clear the current settings
                 strategy_settings.clear()
                 # set the new settings for single mode
@@ -3985,6 +4055,8 @@ def main():
                     },
                 )
                 run_analysis_process.start()
+                app_settings["-TIME_PER_TEST-"] = results["time_per_test"]
+                save_settings(app_settings, settings_filename, values)
                 continue
 
             elif result_key == "-BACKTEST_CANCELED-":
