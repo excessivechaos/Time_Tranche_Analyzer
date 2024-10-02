@@ -1585,7 +1585,6 @@ def optimizer(
                 best = sorted(
                     final_results, key=lambda x: x["metric"], reverse=reverse_sort
                 )
-                logger.debug(best[0])
                 return best
 
             settings_history = []
@@ -1654,8 +1653,16 @@ def optimizer(
             # run the genetic algorithm for the specified number of generations
             for _ in range(generations):
                 run_analysis_kwargs_list = []
+                # lets create a random parent to increase diversit
+                parents = best_performers.copy()
+                parents.append(
+                    {
+                        "metric": 0,
+                        "strategy_settings": {strat_name: get_strat_settings_random()},
+                    }
+                )
                 # we will spawn chidren for each of the top performers
-                for parent in best_performers:
+                for parent in parents:
                     # create childern that inherit all but up to 3 traits that will be mutated
                     for _child in range(children):
                         # how many traits to mutate
@@ -1744,7 +1751,7 @@ def optimizer(
                     key=lambda x: x["metric"],
                     reverse=reverse_sort,
                 )[:3]
-            logger.debug(f"Best performers: {best_performers}")
+                logger.debug(f"Best performers: {best_performers}")
 
         total_time = time.time() - start_time
         time_per_test = total_time / total_tests
