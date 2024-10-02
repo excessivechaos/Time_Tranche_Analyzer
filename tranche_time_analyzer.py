@@ -1593,13 +1593,23 @@ def optimizer(
             run_analysis_kwargs_list = []
             for _ in range(parents):  # create n random parents
                 settings = {strat_name: get_strat_settings_random()}
+                counter = 0
                 while settings in settings_history:
+                    if counter > 99:
+                        # we seem to be having trouble finding a unique
+                        # configuration, we should just move on with what
+                        # we have.
+                        logger.debug(
+                            "Unable to find a unique config for initial parent, moving on"
+                        )
+                        break
                     # this configureation is already in or been tested
                     # get new settings
                     settings = {strat_name: get_strat_settings_random()}
                     logger.debug(
                         "We selected a confuration of settings that has already been selected for the initial test, getting a new random configuration"
                     )
+                    counter += 1
                 # add the settings to history
                 settings_history.append(settings)
                 run_analysis_threaded_kwargs = {
@@ -1646,14 +1656,17 @@ def optimizer(
                 run_analysis_kwargs_list = []
                 # we will spawn chidren for each of the top performers
                 for parent in best_performers:
-                    # create childern that inherit all traits but 1 that will be mutated
+                    # create childern that inherit all but up to 3 traits that will be mutated
                     for _child in range(children):
-                        trait = random.choice(key_traits)
+                        # how many traits to mutate
+                        traits = random.sample(key_traits, k=random.randint(1, 3))
                         # copy the parent
-                        pre_select = parent["strategy_settings"][strat_name].copy()
-                        # remove the trait that we will mutate on
-                        del pre_select[trait]
-                        # get new mutated trait
+                        pre_select = copy.deepcopy(
+                            parent["strategy_settings"][strat_name]
+                        )
+                        for trait in traits:  # remove the trait that we will mutate on
+                            del pre_select[trait]
+                        # get new mutated traits
                         settings = {
                             strat_name: get_strat_settings_random(pre_select=pre_select)
                         }
@@ -4004,6 +4017,15 @@ def main():
                 continue
 
             elif result_key == "-OPTIMIZER-":
+                # handle error
+                if isinstance(results, Exception):
+                    sg.popup_error(
+                        f"Error during Optimization:\n{type(results).__name__}: {results}\nCheck log file for details."
+                    )
+                    results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
+                    continue
+                # no error
+                optimizer_thread.join()
                 strat_name = list(results["strategy_settings"].keys())[0]
                 optimized_settings = results["strategy_settings"][strat_name]
                 # update the settings in the window
