@@ -2926,8 +2926,8 @@ def optimizer_window(files_list) -> None:
                 target=optimizer,
                 kwargs={
                     "file": values["-FILE-"],
-                    "generations": values["-GENERATIONS-"],
-                    "children": values["-CHILDREN-"],
+                    "generations": int(values["-GENERATIONS-"]),
+                    "children": int(values["-CHILDREN-"]),
                 },
             )
             optimizer_thread.start()
