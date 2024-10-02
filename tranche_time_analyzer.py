@@ -2931,6 +2931,7 @@ def optimizer_window(files_list) -> None:
                 },
             )
             optimizer_thread.start()
+            break
     window.close()
     return optimizer_thread
 
