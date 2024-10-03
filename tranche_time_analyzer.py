@@ -1038,7 +1038,11 @@ def get_top_times(
         agg_type = "".join(word[0] for word in settings["-AGG_TYPE-"].split("-"))
         top_n = top_n_override if top_n_override else int(settings["-TOP_X-"])
         calc_type = settings["-CALC_TYPE-"]
-        threshold = settings["-TOP_TIME_THRESHOLD-"] / 100
+        threshold = (
+            settings["-TOP_TIME_THRESHOLD-"] / 100
+            if calc_type == "PCR"
+            else settings["-TOP_TIME_THRESHOLD-"]
+        )
         df_orig = _df_dict["result_df"]
 
         if not date:
@@ -1433,9 +1437,9 @@ def optimizer(
     generations: int = 3,
     children: int = 5,
     selection_metric: str = "MAR",
-    parents: int = 10,
+    num_parents: int = 10,
 ):
-    setup_logging("ERROR")
+    setup_logging("DEBUG")
     try:
         reverse_sort = selection_metric in [
             "MAR",
@@ -1533,6 +1537,7 @@ def optimizer(
                 run_analysis_kwargs_list, metric="MAR", start_date: dt.date = None
             ):
                 nonlocal total_tests
+                setup_logging("DEBUG")
                 analysis_results = pool.map(
                     run_analysis_wrapper, run_analysis_kwargs_list
                 )
@@ -1590,7 +1595,7 @@ def optimizer(
             settings_history = []
             strat_name = os.path.basename(file)
             run_analysis_kwargs_list = []
-            for _ in range(parents):  # create n random parents
+            for _ in range(num_parents):  # create n random parents
                 settings = {strat_name: get_strat_settings_random()}
                 counter = 0
                 while settings in settings_history:
@@ -1620,7 +1625,9 @@ def optimizer(
                     "create_excel": False,
                 }
                 run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
-            logger.debug(f"Starting intial run with {parents} parents")
+            logger.debug(
+                f"Starting optimization with {num_parents} parents, {children} children, {generations} generations"
+            )
 
             # Check for cancel flag before running tests
             if cancel_flag is not None and cancel_flag.is_set():
@@ -1637,45 +1644,51 @@ def optimizer(
                 if results_queue:
                     results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
                 return
-            logger.debug(f"Initial results: {results}")
-            best_performers = results[:3]  # select the top 3 performers
+
             key_traits = [
-                "-AVG_PERIOD_2-",
                 "-AVG_PERIOD_1-",
                 "-PERIOD_1_WEIGHT-",
+                "-AVG_PERIOD_2-",
                 "-TOP_X-",
                 "-CALC_TYPE-",
                 "-AGG_TYPE-",
                 "-PUT_OR_CALL-",
                 "-IDV_WEEKDAY-",
             ]
-
-            # run the genetic algorithm for the specified number of generations
-            for _ in range(generations):
-                run_analysis_kwargs_list = []
-                # lets create a random parent to increase diversit
-                parents = best_performers.copy()
-                parents.append(
-                    {
-                        "metric": 0,
-                        "strategy_settings": {strat_name: get_strat_settings_random()},
-                    }
+            best_performers = results
+            logger.debug(f"Results for initial parents:")
+            for i, performer in enumerate(best_performers):
+                logger.debug(f"{i+1}: {performer["metric"]} {selection_metric}")
+            logger.debug(f"Best Performer:")
+            for i, trait in enumerate(key_traits):
+                logger.debug(
+                    f"{trait}: {best_performers[0]['strategy_settings'][strat_name][trait]}"
                 )
-                # we will spawn chidren for each of the top performers
+                if i + 1 == len(key_traits):
+                    logger.debug("---------------------------------")
+                    logger.debug("\n")
+            stagnation_counter = 0  # how many generations have not made an improvememt
+            last_metric = best_performers[0]["metric"]
+            num_mutations = 1
+            # run the genetic algorithm for the specified number of generations
+            for generation in range(generations):
+                run_analysis_kwargs_list = []
+                # we will spawn chidren for each of the parents
+                parents = best_performers.copy()
                 for parent in parents:
-                    # create childern that inherit all but up to 3 traits that will be mutated
+                    # create childern that inherit all but up to n traits that will be mutated
                     for _child in range(children):
                         # how many traits to mutate
                         mutated_traits = random.sample(
-                            key_traits, k=random.randint(1, 3)
+                            key_traits, k=random.randint(num_mutations)
                         )
                         # copy the parent
                         pre_select = copy.deepcopy(
                             parent["strategy_settings"][strat_name]
                         )
-                        for (
-                            trait
-                        ) in mutated_traits:  # remove the trait that we will mutate on
+
+                        for trait in mutated_traits:
+                            # remove the trait that we will mutate on
                             del pre_select[trait]
                         # get new mutated traits
                         settings = {
@@ -1750,8 +1763,31 @@ def optimizer(
                     best_performers + results,
                     key=lambda x: x["metric"],
                     reverse=reverse_sort,
-                )[:3]
-                logger.debug(f"Best performers: {best_performers}")
+                )[:num_parents]
+                # logger.debug(f"Best performers: {best_performers}")
+                logger.debug(f"Generation: {generation + 1}")
+                logger.debug(f"current mutations: {num_mutations}")
+                if best_performers[0]["metric"] == last_metric:
+                    stagnation_counter += 1
+                else:  # we have an improvemenet, lets reset mutations
+                    stagnation_counter = 0
+                    num_mutations = 1
+                last_metric = best_performers[0]["metric"]
+                if stagnation_counter >= 3:
+                    # we have not seen any progress in 3 generations, lets increase mutations
+                    num_mutations = min(num_mutations + 1, len(key_traits))
+                logger.debug(f"next num mutations: {num_mutations}")
+                logger.debug(f"stagnation_counter: {stagnation_counter}")
+                for i, performer in enumerate(best_performers):
+                    logger.debug(f"{i}: {performer["metric"]} {selection_metric}")
+                logger.debug(f"Best Performer:")
+                for i, trait in enumerate(key_traits):
+                    logger.debug(
+                        f"{trait}: {best_performers[0]['strategy_settings'][strat_name][trait]}"
+                    )
+                    if i + 1 == len(key_traits):
+                        logger.debug("---------------------------------")
+                        logger.debug("\n")
 
         total_time = time.time() - start_time
         time_per_test = total_time / total_tests
@@ -3010,7 +3046,7 @@ def optimizer_window(files_list, app_settings) -> None:
                     "file": values["-FILE-"],
                     "generations": gernerations,
                     "children": children,
-                    "parents": parents,
+                    "num_parents": parents,
                     "selection_metric": values["-SELECTION_METRIC-"],
                 },
             )
@@ -3019,7 +3055,7 @@ def optimizer_window(files_list, app_settings) -> None:
         try:
             total_tests = int(values["-GENERATIONS-"]) * int(
                 values["-CHILDREN-"]
-            ) * 4 + int(values["-PARENTS-"])
+            ) * int(values["-PARENTS-"]) + int(values["-PARENTS-"])
             window["-TOTAL_TESTS-"].update(total_tests)
             total_time = total_tests * time_per_test
             secs = total_time % 60
