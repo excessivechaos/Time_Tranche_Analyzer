@@ -1680,7 +1680,7 @@ def optimizer(
                     for _child in range(children):
                         # how many traits to mutate
                         mutated_traits = random.sample(
-                            key_traits, k=random.randint(num_mutations)
+                            key_traits, k=random.randint(1, num_mutations)
                         )
                         # copy the parent
                         pre_select = copy.deepcopy(
