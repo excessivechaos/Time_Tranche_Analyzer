@@ -10,3 +10,4 @@ pillow
 dateutil
 seaborn
 yfinance
+loguru
