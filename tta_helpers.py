@@ -152,6 +152,8 @@ def get_top_times(
             else settings["-TOP_TIME_THRESHOLD-"]
         )
         df_orig = _df_dict["result_df"]
+        if df_orig.empty:
+            continue
 
         if not date:
             df = df_orig.copy()
