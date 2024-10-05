@@ -19,19 +19,40 @@ class OptimizerResult:
         self.selection_metric = selection_metric
 
     def __str__(self) -> str:
-        metrics_str = f"{self.selection_metric}: {getattr(self, self.selection_metric)}"
+        prefix = ""
+        metrics_str = ""
         for attr in [
-            "Max DD",
-            "DD Days",
+            "MAR",
+            "Sharpe",
             "Total Return",
             "CAGR",
-            "Sharpe",
-            "MAR",
+            "Drawdown%",
+            "Days in Drawdown",
             "Largest Month",
             "Smallest Month",
         ]:
-            if attr != self.selection_metric and hasattr(self, attr):
-                metrics_str += f" | {attr}: {getattr(self, attr)}"
+            if hasattr(self, attr):
+                if attr == "MAR":
+                    metric_str = f"{attr}: {getattr(self, attr):.3f}"
+                elif attr == "Sharpe":
+                    metric_str = f"{attr}: {getattr(self, attr):.3f}"
+                elif attr == "Total Return":
+                    metric_str = f"{attr}: {getattr(self, attr):.2%}"
+                elif attr == "CAGR":
+                    metric_str = f"{attr}: {getattr(self, attr):.2%}"
+                elif attr == "Drawdown%":
+                    metric_str = f"{attr}: {getattr(self, attr):.2%}"
+                elif attr == "Days in Drawdown":
+                    metric_str = f"{attr}: {getattr(self, attr)}"
+                elif attr == "Largest Month":
+                    metric_str = f"{attr}: {getattr(self, attr):.2f}"
+                elif attr == "Smallest Month":
+                    metric_str = f"{attr}: {getattr(self, attr):.2f}"
+                if attr == self.selection_metric:
+                    prefix += metric_str
+                else:
+                    metrics_str += f" | {metric_str}"
+        metrics_str = prefix + metrics_str
         return (
             f"[Avg1: {self.settings['-AVG_PERIOD_1-']}mo({self.settings['-PERIOD_1_WEIGHT-']}%) | "
             f"Avg2: {self.settings['-AVG_PERIOD_2-']}mo({self.settings['-PERIOD_2_WEIGHT-']}%) | "
