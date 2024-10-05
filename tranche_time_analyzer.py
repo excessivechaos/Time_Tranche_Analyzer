@@ -279,7 +279,7 @@ def set_default_app_settings(app_settings):
     if "-TOP_TIME_THRESHOLD-" not in app_settings:
         app_settings["-TOP_TIME_THRESHOLD-"] = ""
     if "-TIME_PER_TEST-" not in app_settings:
-        app_settings["-TIME_PER_TEST-"] = "120"
+        app_settings["-TIME_PER_TEST-"] = "15"
 
 
 def update_strategy_settings(values, settings):
@@ -614,17 +614,16 @@ def optimizer_window(files_list, app_settings) -> None:
     time_per_test = float(app_settings["-TIME_PER_TEST-"])
     text = (
         "This will perform an optimization of TTA settings using a genetic algorithm. "
-        "First n parents will be created using randomly select settings/traits. The "
-        "walk-forward test will be performed for each configuration and the top  3 "
-        "performing parents will be selected. These parents + 1 additional random parent will spawn several children "
+        "First, n parents will be created using randomly select settings/traits. The "
+        "walk-forward test will be performed for each configuration. "
+        "These parents will spawn several children "
         "each inheriting their traits from the parent. Next the children will have one "
-        "or more of their traits mutated with a new random value. The top performers "
-        "from the child generation will then be chosen as parents to the next generation. "
+        "or more of their traits mutated with a new random value. The top performer "
+        "from the child generation will then be chosen as parent to the next generation. "
         "This will continue for however many generations are chosen. Use the selection "
-        "preference to set the metric (e.g. MAR, Sharpe, CAGR) that will be used  for "
+        "preference to set the metric (e.g. MAR, Sharpe, CAGR) that will be used for "
         "determining the top performers. At the the end of the test, the top settings "
-        "will be displayed in a popup window and the final test will be set in the TTA "
-        "window and shown in the graphs for review."
+        "will be set in the main window and a final WF test run to display the charts "
     )
     wrapped_text = textwrap.fill(text, width=88)
     layout = [
