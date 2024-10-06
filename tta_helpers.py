@@ -362,7 +362,7 @@ def resize_base64_image(base64_image, desired_height):
     return base64.b64encode(buf.getvalue())
 
 
-def setup_logging(log_level):
+def setup_logging(logger, log_level):
     """
     sets up the logging, adds the sinks to loguru
     Can be called later to change the log level
@@ -389,6 +389,7 @@ def setup_logging(log_level):
     logger.add(
         log_path, rotation="10 MB", retention=1, format=log_format, level=log_level
     )
+    return logger
 
 
 def with_gc(func):

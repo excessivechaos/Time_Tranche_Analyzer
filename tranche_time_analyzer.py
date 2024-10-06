@@ -34,7 +34,7 @@ from tta_charts import (
     get_weekday_pnl_chart,
 )
 from tta_wf_test import walk_forward_test
-from tta_optimizer import optimizer
+from tta_optimizer import genetic_optimizer, exhaustive_optimizer
 from optimizer_result_model import OptimizerResult
 
 matplotlib.use("TkAgg")
@@ -46,7 +46,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.15.2a"
+__version__ = "v.1.15.3a"
 __program_name__ = "Tranche Time Analyzer"
 
 
@@ -609,7 +609,10 @@ def options_window(settings) -> None:
     Checkbox.clear_elements()
 
 
-def optimizer_window(files_list, app_settings) -> None:
+@with_gc
+def optimizer_window(files_list, app_settings, strategy_settings) -> None:
+    path = os.path.dirname(files_list[0])
+    files = [os.path.basename(file) for file in files_list]
     dpi_scale = get_dpi_scale()
     time_per_test = float(app_settings["-TIME_PER_TEST-"])
     text = (
@@ -625,7 +628,7 @@ def optimizer_window(files_list, app_settings) -> None:
         "determining the top performers. At the the end of the test, the top settings "
         "will be set in the main window and a final WF test run to display the charts "
     )
-    wrapped_text = textwrap.fill(text, width=88)
+    wrapped_text = textwrap.fill(text, width=140)
     layout = [
         [sg.Text(wrapped_text, font=font)],
         [
@@ -641,8 +644,8 @@ def optimizer_window(files_list, app_settings) -> None:
         [
             sg.Text("File to optimize:", font=font),
             sg.Combo(
-                files_list,
-                default_value=files_list[0],
+                files,
+                default_value=files[0],
                 key="-FILE-",
                 readonly=True,
                 font=font,
@@ -652,14 +655,17 @@ def optimizer_window(files_list, app_settings) -> None:
         [
             sg.Text("Number of Initial Parents:", font=font, size=(23, 1)),
             sg.Input(default_text="10", key="-PARENTS-", size=(5, 1), font=font),
-        ],
-        [
-            sg.Text("Number of Generations:", font=font, size=(23, 1)),
+            sg.Text("Number of Generations:", font=font),
             sg.Input(default_text="10", key="-GENERATIONS-", size=(5, 1), font=font),
+            sg.Text("Number of Children:", font=font),
+            sg.Input(default_text="5", key="-CHILDREN-", size=(5, 1), font=font),
         ],
         [
-            sg.Text("Number of Children:", font=font, size=(23, 1)),
-            sg.Input(default_text="5", key="-CHILDREN-", size=(5, 1), font=font),
+            sg.Text("Max Tranches:", font=font, size=(23, 1)),
+            sg.Input(default_text="15", key="-MAX_TRANCHES-", size=(5, 1), font=font),
+            sg.Text("Weight Steps:", font=font),
+            sg.Input(default_text="5", key="-WEIGHT_STEPS-", size=(5, 1), font=font),
+            sg.Text("(e.g. 5 = weights of 5, 10, 15...)", font=font, size=(23, 1)),
         ],
         [
             sg.Text("Selection Preference:", font=font, size=(23, 1)),
@@ -682,14 +688,105 @@ def optimizer_window(files_list, app_settings) -> None:
             ),
         ],
         [
+            sg.Frame(
+                "Static Settings",
+                [
+                    [
+                        sg.Text(
+                            (
+                                "These Settings will be made static, thus reducing the possible combinations."
+                                "\nWhen applied the value that is currently set in the main and options windows will be used."
+                            ),
+                            font=font,
+                        )
+                    ],
+                    [
+                        Checkbox(
+                            "Tranche Qty",
+                            False,
+                            key="-TOP_X-",
+                            font=font,
+                            size=(6, 1),
+                        ),
+                        Checkbox(
+                            "Calc Type",
+                            False,
+                            key="-CALC_TYPE-",
+                            font=font,
+                            size=(5, 1),
+                        ),
+                        Checkbox(
+                            "Aggregation Type",
+                            False,
+                            key="-AGG_TYPE-",
+                            font=font,
+                            size=(10, 1),
+                        ),
+                        Checkbox(
+                            "Put or Call",
+                            False,
+                            key="-PUT_OR_CALL-",
+                            font=font,
+                            size=(6, 1),
+                        ),
+                        Checkbox(
+                            "Individual Weekday",
+                            False,
+                            key="-IDV_WEEKDAY-",
+                            font=font,
+                            size=(10, 1),
+                        ),
+                        Checkbox(
+                            "Use only 1 Avg Period",
+                            False,
+                            key="-USE_1_AVG-",
+                            font=font,
+                            size=(11, 1),
+                        ),
+                    ],
+                ],
+                expand_x=True,
+            )
+        ],
+        [
+            Checkbox(
+                "Exhaustive Search",
+                False,
+                key="-USE_EXHAUSTIVE-",
+                font=font,
+                size=(11, 1),
+            ),
+        ],
+        [
+            sg.Text(
+                (
+                    "A genetic search is more appropriate for searching a large population, when testing all possibilities would be too time consuming."
+                    "\nAn exhaustive search is appropriate for a smaller population, when test all possible combinations is achievable in a shorter timeframe."
+                ),
+                font=font,
+            ),
+        ],
+        [sg.HorizontalSeparator()],
+        [
             sg.Text("Total Tests to Run:", font=font),
             sg.Text("", font=font, key="-TOTAL_TESTS-"),
+            sg.Text("Out of a possible:", font=font),
+            sg.Text("", font=font, key="-TOTAL_POSSIBLE-"),
+            sg.Text("combinations", font=font),
         ],
         [
             sg.Text("Estimated Run Time:", font=font),
             sg.Text("", font=font, key="-RUN_TIME-"),
         ],
-        [sg.Text("Note: Estimated time will improve after each run", font=font)],
+        [
+            sg.Text(
+                (
+                    "Note: Estimated time will improve after each run. It is helpful to perform a quick"
+                    "\ninitial test with 10 parents, 1 generation, and 1 child to get a better time estimate."
+                ),
+                font=font,
+            )
+        ],
         [sg.Button("Start", font=font), sg.Button("Cancel", font=font)],
     ]
 
@@ -702,28 +799,17 @@ def optimizer_window(files_list, app_settings) -> None:
         modal=True,
         resizable=True,
     )
-    # Checkbox.initial(window)
+    Checkbox.initial(window)
     # let window be made so the length is auto set
     # the width always fills the screen when using the custom
     # checkbox class, so we need to change the size.  Allowing
     # the window to self size first we can get the correct height
     window_height = window.size[1]
-    window_width = int(650 * dpi_scale)
+    window_width = int(900 * dpi_scale)
     window.TKroot.geometry(f"{window_width}x{window_height}")
 
     # Now we need to move the window since it opens all the way left.
-    # We will position it at the cursor location since the options button is on the right
-    mouse_x = window.TKroot.winfo_pointerx()
-    mouse_y = window.TKroot.winfo_pointery()
-    x_coordinate = mouse_x - window_width
-    y_coordinate = mouse_y
-
-    # Ensure the window is fully visible
-    x_coordinate = max(0, min(x_coordinate, screen_size[0] - window_width))
-    y_coordinate = max(0, min(y_coordinate, screen_size[1] - window_height))
-
-    # Set the window position
-    window.TKroot.geometry(f"+{x_coordinate}+{y_coordinate}")
+    window.move_to_center()
     optimizer_thread = None
     while True:
         event, values = window.read(timeout=100)
@@ -735,47 +821,131 @@ def optimizer_window(files_list, app_settings) -> None:
                 generations = int(values["-GENERATIONS-"])
                 children = int(values["-CHILDREN-"])
                 parents = int(values["-PARENTS-"])
+                max_tranches = int(values["-MAX_TRANCHES-"])
+                weight_steps = int(values["-WEIGHT_STEPS-"])
             except ValueError:
                 sg.popup_no_border(
-                    "Please correct number of generations, children, and parents values"
+                    "Please correct Inputs. Only integers are allowed.", font=font
                 )
                 continue
-            optimizer_thread = threading.Thread(
-                target=optimizer,
-                kwargs={
-                    "file": values["-FILE-"],
-                    "generations": generations,
-                    "children": children,
-                    "num_parents": parents,
-                    "selection_metric": values["-SELECTION_METRIC-"],
-                    "cancel_flag": cancel_flag,
-                    "results_queue": results_queue,
-                    "weekday_list": weekday_list,
-                    "news_events": news_events,
-                },
-            )
+            selected_file = values["-FILE-"]
+            if app_settings["-PORTFOLIO_MODE-"]:
+                selected_strat_settings = strategy_settings[selected_file]
+            else:
+                selected_strat_settings = strategy_settings["-SINGLE_MODE-"]
+            static_settings = {
+                "-START_VALUE-": app_settings["-START_VALUE-"],
+                "-BP_PER-": selected_strat_settings["-BP_PER-"],
+            }
+            for key in [
+                "-TOP_X-",
+                "-CALC_TYPE-",
+                "-AGG_TYPE-",
+                "-PUT_OR_CALL-",
+                "-IDV_WEEKDAY-",
+            ]:
+                if values[key]:
+                    static_settings[key] = selected_strat_settings[key]
+            if values["-USE_1_AVG-"]:
+                static_settings["-AVG_PERIOD_2-"] = 12
+                static_settings["-PERIOD_2_WEIGHT-"] = 0
+
+            if not values["-USE_EXHAUSTIVE-"]:
+                optimizer_thread = threading.Thread(
+                    target=genetic_optimizer,
+                    kwargs={
+                        "file": os.path.join(path, selected_file),
+                        "generations": generations,
+                        "children": children,
+                        "num_parents": parents,
+                        "selection_metric": values["-SELECTION_METRIC-"],
+                        "cancel_flag": cancel_flag,
+                        "results_queue": results_queue,
+                        "weekday_list": weekday_list,
+                        "news_events": news_events,
+                        "static_settings": static_settings,
+                        "max_tranches": max_tranches,
+                        "bp_per": float(app_settings["-BP_PER-"]),
+                        "initial_value": float(app_settings["-START_VALUE-"]),
+                        "weight_steps": weight_steps,
+                    },
+                )
+            else:
+                optimizer_thread = threading.Thread(
+                    target=exhaustive_optimizer,
+                    kwargs={
+                        "file": os.path.join(path, selected_file),
+                        "selection_metric": values["-SELECTION_METRIC-"],
+                        "cancel_flag": cancel_flag,
+                        "results_queue": results_queue,
+                        "weekday_list": weekday_list,
+                        "news_events": news_events,
+                        "static_settings": static_settings,
+                        "max_tranches": max_tranches,
+                        "bp_per": float(app_settings["-BP_PER-"]),
+                        "initial_value": float(app_settings["-START_VALUE-"]),
+                        "weight_steps": weight_steps,
+                    },
+                )
             optimizer_thread.start()
             break
         try:
-            total_tests = int(values["-GENERATIONS-"]) * int(
-                values["-CHILDREN-"]
-            ) * int(values["-PARENTS-"]) + int(values["-PARENTS-"])
+            generations = int(values["-GENERATIONS-"])
+            children = int(values["-CHILDREN-"])
+            parents = int(values["-PARENTS-"])
+            max_tranches = int(values["-MAX_TRANCHES-"])
+            weight_steps = int(values["-WEIGHT_STEPS-"])
+
+            if values["-USE_1_AVG-"]:
+                num_weights = 1
+                num_months = 12
+            else:
+                num_weights = int(100 / weight_steps)
+                num_months = (
+                    78  # total combos of 2 avg periods from 1 to 12, 2nd >= first
+                )
+            num_tranches = max_tranches if not values["-TOP_X-"] else 1
+            num_calc_types = 2 if not values["-CALC_TYPE-"] else 1
+            num_agg_types = 3 if not values["-AGG_TYPE-"] else 1
+            num_PorC = 2 if not values["-PUT_OR_CALL-"] else 1
+            num_idv_weekday = 2 if not values["-IDV_WEEKDAY-"] else 1
+            total_possible = (
+                num_weights
+                * num_months
+                * num_tranches
+                * num_calc_types
+                * num_agg_types
+                * num_PorC
+                * num_idv_weekday
+            )
+            window["-TOTAL_POSSIBLE-"].update(total_possible)
+
+            if values["-USE_EXHAUSTIVE-"]:
+                total_tests = total_possible
+            else:
+                total_tests = int(values["-GENERATIONS-"]) * int(
+                    values["-CHILDREN-"]
+                ) * int(values["-PARENTS-"]) + int(values["-PARENTS-"])
             window["-TOTAL_TESTS-"].update(total_tests)
+
             total_time = total_tests * time_per_test
             secs = total_time % 60
             mins = (total_time // 60) % 60
             hours = total_time // 3600
             window["-RUN_TIME-"].update(f"{hours:.0f}h:{mins:.0f}m:{secs:.0f}s")
+
         except ValueError:
             window["-TOTAL_TESTS-"].update("")
             window["-RUN_TIME-"].update("")
+            window["-TOTAL_POSSIBLE-"].update("")
     window.close()
+    Checkbox.clear_elements()
     return optimizer_thread
 
 
 def main():
-    global news_events_loaded, news_events
-    setup_logging("ERROR")
+    global news_events_loaded, news_events, logger
+    logger = setup_logging(logger, "ERROR")
     # try to load news events if csv found
     find_news_process = threading.Thread(
         target=find_and_import_news_events, args=(results_queue,), daemon=True
@@ -1139,7 +1309,7 @@ def main():
                             sg.Input(
                                 app_settings["-TOP_X-"],
                                 key="-TOP_X-",
-                                size=(2, 1),
+                                size=(3, 1),
                                 pad=(0, 0),
                                 justification="c",
                                 tooltip="Highlight the top n times for each month in the heatmap.\nWill also display the top n times below",
@@ -1608,6 +1778,13 @@ def main():
             window["-CALC_TYPE_TEXT-"].update(values["-CALC_TYPE-"])
 
         elif event == "Optimizer":
+            save_settings(app_settings, settings_filename, values)
+            # Validate settings for all strategies
+            result = validate_strategy_settings(strategy_settings)
+            if type(result) == str:
+                # there was an error
+                sg.popup_no_border(result)
+                continue
             files_list = values["-FILE-"].split(";")
             if "" in files_list:
                 files_list.remove("")
@@ -1625,7 +1802,9 @@ def main():
             if not files_list:
                 sg.popup_no_border("Please Browse for a file first")
                 continue
-            optimizer_thread = optimizer_window(files_list, app_settings)
+            optimizer_thread = optimizer_window(
+                files_list, app_settings, strategy_settings
+            )
             if optimizer_thread:
                 window["-PROGRESS-"].update(visible=True)
                 window["Analyze"].update("Working...", disabled=True)

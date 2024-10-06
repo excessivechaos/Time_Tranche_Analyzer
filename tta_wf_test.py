@@ -102,7 +102,8 @@ def walk_forward_test(
     news_events: dict = {},
     optimizer_result: OptimizerResult = None,
 ):
-    setup_logging("ERROR")
+    global logger
+    logger = setup_logging(logger, "ERROR")
     try:
         portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
         start_date = dt.date.min
@@ -532,7 +533,11 @@ def walk_forward_test(
 
                     for i, time in enumerate(best_times):
                         # get the qty for this tranche time
-                        qty = tranche_qtys[i]
+                        if tranche_qtys:
+                            qty = tranche_qtys[i]
+                        else:
+                            # we probably ran out of money
+                            qty = 0
                         full_dt = dt.datetime.combine(
                             current_date, dt.datetime.strptime(time, "%H:%M:%S").time()
                         )
