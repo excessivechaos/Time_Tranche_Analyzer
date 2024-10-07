@@ -5,18 +5,29 @@ class OptimizerResult:
         settings: dict = None,
         selection_metric: str = None,
         lineage=None,
+        weekday_list: list = None,
+        news_events: list = None,
+        initial_value: float = None,
+        file: str = None,
+        start_date: str = None,
     ) -> None:
         self.lineage = lineage
         self.strat_name = strat_name
         self.settings = settings
 
-        self.run_analysis_kwargs = None
-        self.wf_test_kwargs = None
+        # self.run_analysis_kwargs = None
+        # self.wf_test_kwargs = None
 
         self.run_analysis_result = None
         self.wf_result = None
 
         self.selection_metric = selection_metric
+
+        self.weekday_list = weekday_list
+        self.news_events = news_events
+        self.initial_value = initial_value
+        self.file = file
+        self.start_date = start_date
 
     def __str__(self) -> str:
         prefix = ""

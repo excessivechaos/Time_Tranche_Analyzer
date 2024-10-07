@@ -305,13 +305,17 @@ def update_strategy_settings(values, settings):
     for option in [
         "-WEEKDAY_EXCLUSIONS-",
         "-NEWS_EXCLUSIONS-",
+    ]:
+        if option not in settings:
+            settings[option] = []
+    for option in [
         "-PUT_OR_CALL-",
         "-IDV_WEEKDAY-",
         "-AUTO_EXCLUSIONS-",
         "-GAP_ANALYSIS-",
     ]:
         if option not in settings:
-            settings[option] = []
+            settings[option] = False
     if "-APPLY_EXCLUSIONS-" not in settings:
         settings["-APPLY_EXCLUSIONS-"] = "Both"
     if "-GAP_THRESHOLD-" not in settings:
@@ -838,6 +842,7 @@ def optimizer_window(files_list, app_settings, strategy_settings) -> None:
             if values["-USE_1_AVG-"]:
                 static_settings["-AVG_PERIOD_2-"] = 12
                 static_settings["-PERIOD_2_WEIGHT-"] = 0
+                static_settings["-PERIOD_1_WEIGHT-"] = 100
 
             if not values["-USE_EXHAUSTIVE-"]:
                 optimizer_thread = threading.Thread(

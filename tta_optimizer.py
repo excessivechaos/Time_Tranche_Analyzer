@@ -12,10 +12,14 @@ from dateutil.relativedelta import relativedelta
 import copy
 from optimizer_result_model import OptimizerResult
 import uuid
+import itertools
+from typing import Dict, List, Any
 
 
 def calc_metrics(optimizer_result: OptimizerResult) -> OptimizerResult:
     """Calc metrics for a single strategy"""
+    if isinstance(optimizer_result, Exception):
+        logger.error(f"Error given to calc_metrics: {optimizer_result}")
     results = optimizer_result.wf_result
     df = list(results.values())[0]
     # Calculate summary statistics for the strategy
@@ -59,15 +63,42 @@ def calc_metrics(optimizer_result: OptimizerResult) -> OptimizerResult:
     return optimizer_result
 
 
-def run_analysis_wrapper(kwargs):
+def run_analysis_wrapper(result: OptimizerResult) -> OptimizerResult:
+    if isinstance(result, Exception):
+        logger.error(f"Error given to run_analysis_wrapper: {result}")
+    kwargs = {
+        "files_list": [result.file],
+        "results_queue": None,
+        "cancel_flag": None,
+        "strategy_settings": {result.strat_name: result.settings},
+        "open_files": False,
+        "create_excel": False,
+        "news_events": result.news_events,
+        "optimizer_result": result,
+    }
     return run_analysis_threaded(**kwargs)
 
 
-def wf_test_wrapper(kwargs):
+def wf_test_wrapper(result: OptimizerResult) -> OptimizerResult:
+    if isinstance(result, Exception):
+        logger.error(f"Error given to wf_test_wrapper: {result}")
+    kwargs = {
+        "results_queue": None,
+        "cancel_flag": None,
+        "df_dicts": result.run_analysis_result,
+        "path": "",
+        "strategy_settings": {result.strat_name: result.settings},
+        "use_scaling": True,
+        "start": result.start_date,
+        "weekday_list": result.weekday_list,
+        "news_events": result.news_events,
+        "optimizer_result": result,
+        "initial_value": result.initial_value,
+    }
     return walk_forward_test(**kwargs)
 
 
-@with_gc
+# @with_gc
 def exhaustive_optimizer(
     file,
     selection_metric: str = "MAR",
@@ -99,81 +130,31 @@ def exhaustive_optimizer(
         start_date = start_date + relativedelta(months=12)
         total_tests = 0
         start_time = time.time()
-
-        settings_list = []
         strat_name = os.path.basename(file)
-        run_analysis_kwargs_list = []
-        key_traits = [
-            "-AVG_PERIOD_1-",
-            "-PERIOD_1_WEIGHT-",
-            "-AVG_PERIOD_2-",
-            "-TOP_X-",
-            "-CALC_TYPE-",
-            "-AGG_TYPE-",
-            "-PUT_OR_CALL-",
-            "-IDV_WEEKDAY-",
-        ]
-        # remove any traits that are static
-        key_traits = [x for x in key_traits if x not in static_settings]
-        if "-AVG_PERIOD_2-" in static_settings:
-            # we don't need the period 1 weight
-            key_traits.remove("-PERIOD_1_WEIGHT-")
+        optimizer_result_list = []
 
-        # loop though all possible combinations
-        for avg_period_1 in range(1, 13):
-            for period_1_weight in range(weight_steps, 101, weight_steps):
-                for avg_period_2 in range(avg_period_1, 13):
-                    for top_x in range(1, max_tranches + 1):
-                        for calc_type in ["PCR", "PnL"]:
-                            for agg_type in ["Weekly", "Semi-Monthly", "Monthly"]:
-                                for put_or_call in [True, False]:
-                                    for idv_weekday in [True, False]:
-                                        # we first get randomized settings, as this will setup all the
-                                        # necessary settings, then we will change the ones we need to change
-                                        settings = get_strat_settings_random(
-                                            pre_select=static_settings, bp_per=bp_per
-                                        )
-                                        for trait in key_traits:
-                                            if trait == "-AVG_PERIOD_1-":
-                                                settings[trait] = avg_period_1
-                                            elif trait == "-PERIOD_1_WEIGHT-":
-                                                settings[trait] = period_1_weight
-                                            elif trait == "-AVG_PERIOD_2-":
-                                                settings[trait] = avg_period_2
-                                            elif trait == "-TOP_X-":
-                                                settings[trait] = top_x
-                                            elif trait == "-CALC_TYPE-":
-                                                settings[trait] = calc_type
-                                            elif trait == "-AGG_TYPE-":
-                                                settings[trait] = agg_type
-                                            elif trait == "-PUT_OR_CALL-":
-                                                settings[trait] = put_or_call
-                                            elif trait == "-IDV_WEEKDAY-":
-                                                settings[trait] = idv_weekday
-                                        if settings not in settings_list:
-                                            settings_list.append(settings)
-
+        settings_list = generate_combinations(
+            static_settings=static_settings,
+            bp_per=bp_per,
+            weight_steps=weight_steps,
+            max_tranches=max_tranches,
+        )
         for settings in settings_list:
             new_optimizer_result = OptimizerResult(
                 strat_name,
                 settings,
                 selection_metric=selection_metric,
                 lineage=uuid.uuid4(),
+                weekday_list=weekday_list,
+                news_events=news_events,
+                initial_value=initial_value,
+                file=file,
+                start_date=start_date,
             )
-            run_analysis_threaded_kwargs = {
-                "files_list": [file],
-                "results_queue": None,
-                "cancel_flag": None,
-                "strategy_settings": {strat_name: settings},
-                "open_files": False,
-                "create_excel": False,
-                "news_events": news_events,
-                "optimizer_result": new_optimizer_result,
-            }
-            new_optimizer_result.run_analysis_kwargs = run_analysis_threaded_kwargs
-            run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
+
+            optimizer_result_list.append(new_optimizer_result)
         logger.debug(
-            f"Starting exhaustive search of {len(run_analysis_kwargs_list)} possible combinations"
+            f"Starting exhaustive search of {len(optimizer_result_list)} possible combinations"
         )
         # Check for cancel flag before running tests
         if cancel_flag is not None and cancel_flag.is_set():
@@ -181,16 +162,16 @@ def exhaustive_optimizer(
             if results_queue:
                 results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
             return
-
+        total_tests = len(optimizer_result_list)
         results = run_tests_in_pool(
-            run_analysis_kwargs_list,
-            weekday_list,
-            news_events,
+            optimizer_result_list,
             cancel_flag,
-            start_date=start_date,
-            initial_value=initial_value,
         )
-        total_tests += len(results)
+        if cancel_flag is not None and cancel_flag.is_set():
+            cancel_flag.clear()
+            if results_queue:
+                results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
+            return
         total_time = time.time() - start_time
         time_per_test = total_time / total_tests
         msg = "Test complete, here are all the results:"
@@ -213,7 +194,7 @@ def exhaustive_optimizer(
         logger.exception("Error in optimizer")
 
 
-@with_gc
+# @with_gc
 def genetic_optimizer(
     file,
     generations: int = 3,
@@ -253,7 +234,7 @@ def genetic_optimizer(
 
         settings_history = []
         strat_name = os.path.basename(file)
-        run_analysis_kwargs_list = []
+        optimizer_result_list = []
         for _ in range(num_parents):  # create n random parents
             settings = {
                 strat_name: get_strat_settings_random(
@@ -288,24 +269,20 @@ def genetic_optimizer(
                 counter += 1
             # add the settings to history
             settings_history.append(settings)
+            # create a new parent to store settings and results
             new_parent = OptimizerResult(
                 strat_name,
                 settings[strat_name],
                 selection_metric=selection_metric,
                 lineage=uuid.uuid4(),
+                weekday_list=weekday_list,
+                news_events=news_events,
+                initial_value=initial_value,
+                file=file,
+                start_date=start_date,
             )
-            run_analysis_threaded_kwargs = {
-                "files_list": [file],
-                "results_queue": None,
-                "cancel_flag": None,
-                "strategy_settings": settings,
-                "open_files": False,
-                "create_excel": False,
-                "news_events": news_events,
-                "optimizer_result": new_parent,
-            }
-            new_parent.run_analysis_kwargs = run_analysis_threaded_kwargs
-            run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
+
+            optimizer_result_list.append(new_parent)
 
         logger.debug(
             f"Starting optimization with {num_parents} parents, {children} children, {generations} generations"
@@ -318,12 +295,8 @@ def genetic_optimizer(
                 results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
             return
         results = run_tests_in_pool(
-            run_analysis_kwargs_list,
-            weekday_list,
-            news_events,
+            optimizer_result_list,
             cancel_flag,
-            start_date=start_date,
-            initial_value=initial_value,
         )  # run the initial test
         # Check for cancel flag again in case it happened during
         if cancel_flag is not None and cancel_flag.is_set():
@@ -353,13 +326,11 @@ def genetic_optimizer(
         ]
         # remove any traits that are static
         key_traits = [x for x in key_traits if x not in static_settings]
-        if "-AVG_PERIOD_2-" in static_settings:
-            # we don't need the period 1 weight
-            key_traits.remove("-PERIOD_1_WEIGHT-")
+
         num_mutations = 1
         # run the genetic algorithm for the specified number of generations
         for generation in range(generations):
-            run_analysis_kwargs_list = []
+            optimizer_result_list = []
             # we will spawn children for each of the parents
             for parent_lineage, parent_list in test_results.items():
                 # get the best result from the parent lineage
@@ -432,26 +403,19 @@ def genetic_optimizer(
                     # add the settings to history
                     settings_history.append(settings)
                     # new optimizer result object to hold the results of the test
-                    new_parent = OptimizerResult(
+                    new_child = OptimizerResult(
                         strat_name,
                         settings[strat_name],
                         selection_metric=selection_metric,
                         lineage=parent_lineage,
+                        weekday_list=weekday_list,
+                        news_events=news_events,
+                        initial_value=initial_value,
+                        file=file,
+                        start_date=start_date,
                     )
-                    # build the kwargs to run the analysis
-                    run_analysis_threaded_kwargs = {
-                        "files_list": [file],
-                        "results_queue": None,
-                        "cancel_flag": None,
-                        "strategy_settings": settings,
-                        "open_files": False,
-                        "create_excel": False,
-                        "news_events": news_events,
-                        "optimizer_result": new_parent,
-                    }
-                    new_parent.run_analysis_kwargs = run_analysis_threaded_kwargs
                     # add to list
-                    run_analysis_kwargs_list.append(run_analysis_threaded_kwargs)
+                    optimizer_result_list.append(new_child)
             # Check for cancel flag before running tests
             if cancel_flag is not None and cancel_flag.is_set():
                 cancel_flag.clear()
@@ -459,12 +423,8 @@ def genetic_optimizer(
                     results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
                 return
             results = run_tests_in_pool(
-                run_analysis_kwargs_list,
-                weekday_list,
-                news_events,
+                optimizer_result_list,
                 cancel_flag,
-                start_date=start_date,
-                initial_value=initial_value,
             )
             # Check for cancel flag again in case it happened during
             if cancel_flag is not None and cancel_flag.is_set():
@@ -575,13 +535,88 @@ def get_strat_settings_random(
     return settings
 
 
+def generate_combinations(
+    static_settings: Dict[str, Any],
+    bp_per: float = 6000,
+    weight_steps: int = 5,
+    max_tranches: int = 15,
+) -> List[Dict[str, Any]]:
+    key_traits = [
+        "-AVG_PERIOD_1-",
+        "-PERIOD_1_WEIGHT-",
+        "-AVG_PERIOD_2-",
+        "-TOP_X-",
+        "-CALC_TYPE-",
+        "-AGG_TYPE-",
+        "-PUT_OR_CALL-",
+        "-IDV_WEEKDAY-",
+    ]
+    dynamic_traits = [x for x in key_traits if x not in static_settings]
+
+    ranges = {
+        "-AVG_PERIOD_1-": range(1, 13),
+        "-PERIOD_1_WEIGHT-": range(weight_steps, 101, weight_steps),
+        "-AVG_PERIOD_2-": range(1, 13),
+        "-TOP_X-": range(1, max_tranches + 1),
+        "-CALC_TYPE-": ["PCR", "PnL"],
+        "-AGG_TYPE-": ["Weekly", "Semi-Monthly", "Monthly"],
+        "-PUT_OR_CALL-": [True, False],
+        "-IDV_WEEKDAY-": [True, False],
+    }
+
+    dynamic_ranges = [ranges[trait] for trait in dynamic_traits]
+    settings_list = []
+
+    start_time = time.time()
+    for combination in itertools.product(*dynamic_ranges):
+        settings = static_settings.copy()
+
+        # Set dynamic parameters
+        for trait, value in zip(dynamic_traits, combination):
+            settings[trait] = value
+
+        # Ensure AVG_PERIOD_2 >= AVG_PERIOD_1
+        if "-AVG_PERIOD_2-" in settings and "-AVG_PERIOD_1-" in settings:
+            if settings["-AVG_PERIOD_2-"] < settings["-AVG_PERIOD_1-"]:
+                continue
+
+        # Set PERIOD_2_WEIGHT based on PERIOD_1_WEIGHT
+        if "-PERIOD_1_WEIGHT-" in settings:
+            settings["-PERIOD_2_WEIGHT-"] = 100 - settings["-PERIOD_1_WEIGHT-"]
+
+        # Set non-dynamic parameters
+        settings["-MIN_TRANCHES-"] = settings["-TOP_X-"]
+        settings["-MAX_TRANCHES-"] = settings["-TOP_X-"]
+        settings["-BP_PER-"] = bp_per
+        settings["-PASSTHROUGH_MODE-"] = False
+        settings["-PORT_WEIGHT-"] = 100
+        settings["-TOP_TIME_THRESHOLD-"] = float("-inf")
+        settings["-APPLY_EXCLUSIONS-"] = "Both"
+        settings["-GAP_THRESHOLD-"] = 0
+        settings["-GAP_TYPE-"] = "%"
+
+        # Initialize option settings
+        for option in [
+            "-WEEKDAY_EXCLUSIONS-",
+            "-NEWS_EXCLUSIONS-",
+            "-AUTO_EXCLUSIONS-",
+            "-GAP_ANALYSIS-",
+        ]:
+            if option not in settings:
+                settings[option] = []
+
+        if settings not in settings_list:
+            settings_list.append(settings)
+
+    print(f"Time taken: {time.time() - start_time:.2f} seconds")
+    print(f"Total combinations generated: {len(settings_list)}")
+
+    return settings_list
+
+
 def run_tests_in_pool(
-    run_analysis_kwargs_list,
-    weekday_list,
-    news_events,
+    optimizer_result_list,
     cancel_flag,
-    start_date: dt.date = None,
-    initial_value: float = 100000,
 ):
     global logger
     logger = setup_logging(logger, "DEBUG")
@@ -593,44 +628,30 @@ def run_tests_in_pool(
         logger.exception("Error retrieving CPU count")
         cpu_count = 2
 
-    with Pool(processes=cpu_count) as pool:
-        analysis_results = pool.map(run_analysis_wrapper, run_analysis_kwargs_list)
-        for result in analysis_results:
-            if isinstance(result, Exception):
-                try:
-                    raise result
-                except Exception as e:
-                    logger.exception("Exception from run_analysis_threaded")
-                    raise result  # re-raise the exception
-        logger.debug(f"analysis results: {len(analysis_results)}")
-        wf_test_kwargs_list = []
-        for result in analysis_results:
-            wf_test_kwargs = {
-                "results_queue": None,
-                "cancel_flag": None,
-                "df_dicts": result.run_analysis_result,
-                "path": "",
-                "strategy_settings": {result.strat_name: result.settings},
-                "use_scaling": True,
-                "start": start_date,
-                "weekday_list": weekday_list,
-                "news_events": news_events,
-                "optimizer_result": result,
-                "initial_value": initial_value,
-            }
-            wf_test_kwargs_list.append(wf_test_kwargs)
-        # Check for cancel flag
-        if cancel_flag is not None and cancel_flag.is_set():
-            return
-        wf_test_results = pool.map(wf_test_wrapper, wf_test_kwargs_list)
-        for result in wf_test_results:
-            if isinstance(result, Exception):
-                raise result
-        logger.debug(f"wf test results: {len(wf_test_results)}")
+    with Pool(processes=cpu_count, maxtasksperchild=100) as pool:
+        analysis_results = pool.imap_unordered(
+            run_analysis_wrapper, optimizer_result_list
+        )
+        # analysis_results = list(analysis_results)
+        # for result in analysis_results:
+        #     if isinstance(result, Exception):
+        #         try:
+        #             raise result
+        #         except Exception as e:
+        #             logger.exception("Exception from run_analysis_threaded")
+        #             raise result  # re-raise the exception
 
         # Check for cancel flag
         if cancel_flag is not None and cancel_flag.is_set():
             return
-        calc_metric_results = pool.map(calc_metrics, wf_test_results)
+        wf_test_results = pool.imap_unordered(wf_test_wrapper, analysis_results)
 
-        return calc_metric_results
+        # for result in wf_test_results:
+        #     if isinstance(result, Exception):
+        #         raise result
+
+        # Check for cancel flag
+        if cancel_flag is not None and cancel_flag.is_set():
+            return
+        calc_metric_results = pool.imap_unordered(calc_metrics, wf_test_results)
+        return list(calc_metric_results)

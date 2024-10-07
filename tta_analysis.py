@@ -97,11 +97,11 @@ def run_analysis_threaded(
             return optimizer_result
         return df_dicts
     except Exception as e:
+        logger.exception("Error in run_analysis_threaded")
         if results_queue:
             results_queue.put(("-RUN_ANALYSIS_END-", e))
         else:
             return e
-        logger.exception("Error in run_analysis_threaded")
 
 
 def create_excel_file(
@@ -254,9 +254,14 @@ def create_excel_file(
                     # run the analysis
                     if settings["-APPLY_EXCLUSIONS-"] != "Walk Forward Test":
                         # exclusions are only for WF, so use the non-filtered df
-                        df_output, df_output_1mo_avg = analyze(_df, settings, news_events)
+                        df_output, df_output_1mo_avg = analyze(
+                            _df, settings, news_events
+                        )
                         # store the results and the original df in case we need it later
-                        df_dicts[strat][day[:3]] = {"org_df": _df, "result_df": df_output}
+                        df_dicts[strat][day[:3]] = {
+                            "org_df": _df,
+                            "result_df": df_output,
+                        }
                     else:
                         # otherwise we use the filtered/excluded df for analysis
                         df_output, df_output_1mo_avg = analyze(
@@ -288,7 +293,9 @@ def create_excel_file(
             # use All df from Put/Call Combined for row and col lengths
             df_output = df_dicts["Put-Call Comb"]["All"]["result_df"]
             # Set the PCR columns to percentage format
-            percent_format = workbook.add_format({"num_format": "0.00%", "align": "center"})
+            percent_format = workbook.add_format(
+                {"num_format": "0.00%", "align": "center"}
+            )
             top_x_format = workbook.add_format(
                 {"bold": 1, "font_color": "#FFFFFF"}
             )  # white
@@ -333,7 +340,9 @@ def create_excel_file(
             try:
                 if platform.system() == "Windows":
                     os.startfile(filename)
-                elif platform.system() == "Darwin":  # This is the value returned for macOS
+                elif (
+                    platform.system() == "Darwin"
+                ):  # This is the value returned for macOS
                     subprocess.Popen(["open", filename])
                 else:
                     subprocess.call(("xdg-open", filename))  # linux
@@ -407,7 +416,9 @@ def analyze(
                         current_period_end - pd.DateOffset(months=long_avg_period - 1)
                     ).replace(day=1)
                 elif agg_type == "W":
-                    current_period_end = date.to_timestamp() + pd.offsets.Week(weekday=6)
+                    current_period_end = date.to_timestamp() + pd.offsets.Week(
+                        weekday=6
+                    )
                     previous_period_start = current_period_end - pd.DateOffset(
                         weeks=int(long_avg_period * 4.33)
                     )
@@ -422,7 +433,8 @@ def analyze(
                             date.year, date.month, date.days_in_month
                         )
                         previous_period_start = (
-                            current_period_end - pd.DateOffset(months=long_avg_period - 1)
+                            current_period_end
+                            - pd.DateOffset(months=long_avg_period - 1)
                         ).replace(day=1)
                     # if previous_period_start.day > 15:
                     #     previous_period_start = previous_period_start.replace(day=16)
