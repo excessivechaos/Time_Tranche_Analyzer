@@ -543,19 +543,8 @@ def options_window(settings) -> None:
     window_width = int(650 * dpi_scale)
     window.TKroot.geometry(f"{window_width}x{window_height}")
 
-    # Now we need to move the window since it opens all the way left.
-    # We will position it at the cursor location since the options button is on the right
-    mouse_x = window.TKroot.winfo_pointerx()
-    mouse_y = window.TKroot.winfo_pointery()
-    x_coordinate = mouse_x - window_width
-    y_coordinate = mouse_y
-
-    # Ensure the window is fully visible
-    x_coordinate = max(0, min(x_coordinate, screen_size[0] - window_width))
-    y_coordinate = max(0, min(y_coordinate, screen_size[1] - window_height))
-
     # Set the window position
-    window.TKroot.geometry(f"+{x_coordinate}+{y_coordinate}")
+    window.move_to_center()
 
     while True:
         event, values = window.read()
@@ -1985,17 +1974,23 @@ def main():
                 strategy_settings.clear()
                 # set the new settings for single mode
                 strategy_settings[strat_name] = optimized_settings
-                # turn off port mode if it was on
-                if values["-PORTFOLIO_MODE-"]:
-                    window["-PORTFOLIO_MODE-"].update(value=False)
-                    for key in [
-                        "-STRATEGY_SELECT-",
-                        "-PASSTHROUGH_MODE-",
-                        "-PORT_WEIGHT_TEXT1-",
-                        "-PORT_WEIGHT-",
-                        "-PORT_WEIGHT_TEXT2-",
-                    ]:
-                        window[key].update(visible=False)
+
+                # we will always run the result with port mode
+                # this allows the options window settings to be applied
+                window["-PORTFOLIO_MODE-"].update(value=True)
+                values["-PORTFOLIO_MODE-"] = True
+                for key in [
+                    "-STRATEGY_SELECT-",
+                    "-PASSTHROUGH_MODE-",
+                    "-PORT_WEIGHT_TEXT1-",
+                    "-PORT_WEIGHT-",
+                    "-PORT_WEIGHT_TEXT2-",
+                ]:
+                    window[key].update(visible=True)
+                window["-STRATEGY_SELECT-"].update(values=[strat_name])
+                # select our optimized strategy
+                window["-STRATEGY_SELECT-"].update(value=strat_name)
+                values["-STRATEGY_SELECT-"] = strat_name
                 # turn on backtest and scaling
                 window["-BACKTEST-"].update(value=True)
                 window["-SCALING-"].update(value=True)
@@ -2023,7 +2018,7 @@ def main():
                 run_analysis_process.start()
                 app_settings["-TIME_PER_TEST-"] = time_per_test
                 save_settings(app_settings, settings_filename, values)
-                continue
+                break
 
             elif result_key == "-BACKTEST_CANCELED-":
                 if results == "-RUN_ANALYSIS-":
@@ -2048,6 +2043,7 @@ def main():
 
             elif result_key == "-ERROR-":
                 sg.popup_no_border(results)
+
         # move the progress bar
         if window["Analyze"].Disabled:
             window["-PROGRESS-"].Widget["value"] += 10
