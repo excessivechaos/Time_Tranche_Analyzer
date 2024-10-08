@@ -2,7 +2,7 @@ from tta_helpers import with_gc
 import pandas as pd
 import matplotlib
 
-matplotlib.use("TkAgg")
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 from io import BytesIO
