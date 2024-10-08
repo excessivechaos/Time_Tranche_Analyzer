@@ -37,9 +37,6 @@ from tta_wf_test import walk_forward_test
 from tta_optimizer import genetic_optimizer, exhaustive_optimizer
 from optimizer_result_model import OptimizerResult
 
-matplotlib.use("TkAgg")
-import matplotlib.pyplot as plt
-
 # make app dpi aware
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(1)
