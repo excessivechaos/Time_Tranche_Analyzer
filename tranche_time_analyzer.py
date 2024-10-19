@@ -43,7 +43,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.15.6a"
+__version__ = "v.1.15.7a"
 __program_name__ = "Tranche Time Analyzer"
 
 

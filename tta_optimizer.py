@@ -154,7 +154,7 @@ def exhaustive_optimizer(
 
             optimizer_result_list.append(new_optimizer_result)
         logger.debug(
-            f"Starting exhaustive search of {len(optimizer_result_list)} possible combinations"
+            f"Starting exhaustive search of {len(optimizer_result_list)} possible combinations for '{strat_name}'"
         )
         # Check for cancel flag before running tests
         if cancel_flag is not None and cancel_flag.is_set():
@@ -163,10 +163,19 @@ def exhaustive_optimizer(
                 results_queue.put(("-BACKTEST_CANCELED-", "-OPTIMIZER-"))
             return
         total_tests = len(optimizer_result_list)
-        results = run_tests_in_pool(
-            optimizer_result_list,
-            cancel_flag,
-        )
+        results = []
+        # will break this up into chunks of 24 to avoid memory errors
+        chunk_opt_list = chunk_list(optimizer_result_list, 24)
+        for i, test_chunk_list in enumerate(chunk_opt_list):
+            chunk_results = run_tests_in_pool(
+                test_chunk_list,
+                cancel_flag,
+            )
+            results += chunk_results
+            msg = f"results of tests {(i * 24) + 1} to {max((i + 1) * 24, len(optimizer_result_list))}:"
+            for idx, result in enumerate(chunk_results, start=1):
+                msg += f"\n{idx + (i * 24)}: {result}"
+            logger.debug(msg)
         if cancel_flag is not None and cancel_flag.is_set():
             cancel_flag.clear()
             if results_queue:
@@ -285,7 +294,7 @@ def genetic_optimizer(
             optimizer_result_list.append(new_parent)
 
         logger.debug(
-            f"Starting optimization with {num_parents} parents, {children} children, {generations} generations"
+            f"Starting optimization with {num_parents} parents, {generations} generations, {children} children for '{strat_name}'"
         )
 
         # Check for cancel flag before running tests
@@ -608,9 +617,6 @@ def generate_combinations(
         if settings not in settings_list:
             settings_list.append(settings)
 
-    print(f"Time taken: {time.time() - start_time:.2f} seconds")
-    print(f"Total combinations generated: {len(settings_list)}")
-
     return settings_list
 
 
@@ -622,7 +628,7 @@ def run_tests_in_pool(
     logger = setup_logging(logger, "DEBUG")
     try:
         # we will use all but 1 cpu, so hopefully the host
-        # other programs will not slow too much.
+        # os and other programs will not slow too much.
         cpu_count = max(os.cpu_count() - 1, 1)
     except Exception as e:
         logger.exception("Error retrieving CPU count")
@@ -632,25 +638,10 @@ def run_tests_in_pool(
         analysis_results = pool.imap_unordered(
             run_analysis_wrapper, optimizer_result_list
         )
-        # analysis_results = list(analysis_results)
-        # for result in analysis_results:
-        #     if isinstance(result, Exception):
-        #         try:
-        #             raise result
-        #         except Exception as e:
-        #             logger.exception("Exception from run_analysis_threaded")
-        #             raise result  # re-raise the exception
-
-        # Check for cancel flag
         if cancel_flag is not None and cancel_flag.is_set():
             return
         wf_test_results = pool.imap_unordered(wf_test_wrapper, analysis_results)
 
-        # for result in wf_test_results:
-        #     if isinstance(result, Exception):
-        #         raise result
-
-        # Check for cancel flag
         if cancel_flag is not None and cancel_flag.is_set():
             return
         calc_metric_results = pool.imap_unordered(calc_metrics, wf_test_results)
