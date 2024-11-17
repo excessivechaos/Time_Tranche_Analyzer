@@ -301,7 +301,9 @@ def walk_forward_test(
                     spx_history = spx_history.set_index("Date")
 
         while current_date <= end:
-            logger.debug(f"WF Test - Current date: {current_date}")
+            if not optimizer_result:
+                # only log progress if we are not doing an optimization
+                logger.debug(f"WF Test - Current date: {current_date}")
 
             # check for cancel flag to stop thread
             if cancel_flag is not None and cancel_flag.is_set():
