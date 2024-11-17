@@ -4,9 +4,9 @@ import os
 import json
 from loguru import logger
 import threading
+import pickle
 from multiprocessing import Process, Queue, Event, freeze_support, Pool
 import webbrowser
-import matplotlib
 import pandas as pd
 import PySimpleGUI as sg
 from dateutil import parser
@@ -43,7 +43,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.15.7a"
+__version__ = "v.1.15.8a"
 __program_name__ = "Tranche Time Analyzer"
 
 
@@ -936,7 +936,7 @@ def optimizer_window(files_list, app_settings, strategy_settings) -> None:
 
 def main():
     global news_events_loaded, news_events, logger
-    logger = setup_logging(logger, "ERROR")
+    logger = setup_logging(logger, "DEBUG")
     # try to load news events if csv found
     find_news_process = threading.Thread(
         target=find_and_import_news_events, args=(results_queue,), daemon=True
@@ -1635,6 +1635,8 @@ def main():
             window["-PROGRESS-"].update(visible=True)
             window["Analyze"].update("Working...", disabled=True)
             window["Cancel"].update(visible=True)
+
+            logger.info("Starting analysis...")
             run_analysis_process = Process(
                 target=run_analysis_threaded,
                 kwargs={
@@ -1817,18 +1819,30 @@ def main():
         # check if thread is done
         while True:
             if not results_queue.empty():
+                logger.debug("Getting results from queue...")
                 result_key, results = results_queue.get(block=False)
             else:
                 break
 
             if result_key == "-RUN_ANALYSIS_END-":
+                logger.debug("Joining analysis process..")
                 run_analysis_process.join()
+                logger.debug("Analysis process joined")
                 if isinstance(results, Exception):
                     sg.popup_error(
                         f"Error during Analysis:\n{type(results).__name__}: {results}\nCheck log file for details.\n\nAre you sure this is a BYOB or OO csv?"
                     )
                 else:
-                    df_dicts = results
+                    if isinstance(results, tuple):
+                        logger.debug("unpickling results...")
+                        # ("-RESULTS_PATH-", results_path)
+                        results_path = results[1]
+                        with open(results_path, "rb") as f:
+                            df_dicts = pickle.load(f)
+                    else:
+                        df_dicts = results
+
+                    logger.info("unpacking results, updating best times tables...")
                     for right_type, day_dict in df_dicts.items():
                         for day, df_dict in day_dict.items():
 
@@ -1852,6 +1866,12 @@ def main():
                         os.path.dirname(files_list[0]), "data", "trade_logs"
                     )
                     os.makedirs(path, exist_ok=True)
+
+                    if isinstance(results, tuple):
+                        # just pass the path to the backtest function
+                        df_dicts = results[1]
+
+                    logger.info("Starting Walk-Forward Test")
                     wf_test_process = Process(
                         target=walk_forward_test,
                         args=(

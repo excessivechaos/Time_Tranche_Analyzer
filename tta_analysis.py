@@ -1,7 +1,7 @@
 from loguru import logger
 from tta_helpers import with_gc, setup_logging, load_data
 from multiprocessing import Queue, Event
-import os
+import os, sys
 from typing import Tuple
 from io import BytesIO
 import pandas as pd
@@ -9,6 +9,7 @@ from openpyxl.utils import get_column_letter
 import platform
 import subprocess
 from optimizer_result_model import OptimizerResult
+import pickle
 
 
 @with_gc
@@ -23,7 +24,7 @@ def run_analysis_threaded(
     optimizer_result: OptimizerResult = None,
 ):
     global logger
-    logger = setup_logging(logger, "ERROR")
+    logger = setup_logging(logger, "DEBUG")
     try:
         # initialize df_dicts
         df_dicts = {}
@@ -35,6 +36,7 @@ def run_analysis_threaded(
                 else os.path.basename(file)
             )
             settings = strategy_settings[strategy]
+            logger.info(f"Creating heatmap for {file}")
             result_dicts = create_excel_file(
                 file,
                 settings,
@@ -90,8 +92,26 @@ def run_analysis_threaded(
                             df_dicts[_best][_day][
                                 f"{_right.removesuffix("s")}||{_source}"
                             ] = _df_dict
+
+        logger.info("Analysis Finished")
         if results_queue:
-            results_queue.put(("-RUN_ANALYSIS_END-", df_dicts))
+            logger.debug("Pickling results...")
+            # Get the directory of the current script
+            if getattr(sys, "frozen", False):
+                # The application is running in a bundle (PyInstaller)
+                current_dir = os.path.dirname(sys.executable)
+            else:
+                # The application is running in a normal Python environment
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+            # Create a 'data' directory if it doesn't exist
+            data_dir = os.path.join(current_dir, "data")
+            os.makedirs(data_dir, exist_ok=True)
+            results_path = os.path.join(data_dir, "results.pkl")
+            with open(results_path, "wb") as f:
+                pickle.dump(df_dicts, f)
+            logger.debug("Results pickled")
+            results_queue.put(("-RUN_ANALYSIS_END-", ("-RESULTS_PATH-", results_path)))
+
         if optimizer_result is not None:
             optimizer_result.run_analysis_result = df_dicts
             return optimizer_result

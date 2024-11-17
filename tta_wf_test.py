@@ -14,6 +14,7 @@ import os
 import uuid
 from loguru import logger
 from optimizer_result_model import OptimizerResult
+import pickle
 
 
 def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
@@ -89,7 +90,7 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
 def walk_forward_test(
     results_queue: Queue = None,
     cancel_flag=None,
-    df_dicts: dict = None,
+    df_dicts: dict | str = None,
     path: str = None,
     strategy_settings: dict = None,
     start: dt.date = None,
@@ -103,8 +104,22 @@ def walk_forward_test(
     optimizer_result: OptimizerResult = None,
 ):
     global logger
-    logger = setup_logging(logger, "ERROR")
+    logger = setup_logging(logger, "DEBUG")
     try:
+        logger.info("Starting Walk-Forward test...")
+        if isinstance(df_dicts, str):
+            logger.debug("Loading df_dicts from pickle file...")
+            with open(df_dicts, "rb") as f:
+                df_dicts_pkl = pickle.load(f)
+            logger.debug("df_dicts loaded from pickle file.")
+            logger.debug(f"Removing pickle file: {df_dicts}")
+            try:
+                os.remove(df_dicts)
+            except Exception as e:
+                logger.error(f"Failed to remove pickle file: {e}")
+
+            df_dicts = df_dicts_pkl
+
         portfolio_mode = "-SINGLE_MODE-" not in strategy_settings
         start_date = dt.date.min
         passthrough_start_date = dt.date.min
@@ -286,6 +301,8 @@ def walk_forward_test(
                     spx_history = spx_history.set_index("Date")
 
         while current_date <= end:
+            logger.debug(f"WF Test - Current date: {current_date}")
+
             # check for cancel flag to stop thread
             if cancel_flag is not None and cancel_flag.is_set():
                 cancel_flag.clear()
