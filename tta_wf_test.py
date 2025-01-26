@@ -693,7 +693,7 @@ def walk_forward_test(
 
                     # Export the signals for each csv (strategy) separately
                     if not portfolio_mode:
-                        strategies = data["Strategy"].unique()
+                        strategies = data["Strategy"].dropna().unique()
                         for strategy in strategies:
                             base_filename = (
                                 f"{strat} - OO_Signal_File_{strategy}_{uuid_str}"
