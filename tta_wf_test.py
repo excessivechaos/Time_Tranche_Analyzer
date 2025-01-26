@@ -301,7 +301,7 @@ def walk_forward_test(
                     spx_history = spx_history.set_index("Date")
 
         while current_date <= end:
-            if not optimizer_result:
+            if not optimizer_result and current_date.day == 1:
                 # only log progress if we are not doing an optimization
                 logger.debug(f"WF Test - Current date: {current_date}")
 
