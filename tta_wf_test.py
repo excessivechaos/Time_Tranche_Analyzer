@@ -693,18 +693,21 @@ def walk_forward_test(
 
                     # Export the signals for each csv (strategy) separately
                     if not portfolio_mode:
-                        strategies = data["Strategy"].dropna().unique()
-                        for strategy in strategies:
-                            base_filename = (
-                                f"{strat} - OO_Signal_File_{strategy}_{uuid_str}"
-                            )
-                            ext = ".csv"
-                            export_filename = get_next_filename(
-                                path, base_filename, ext
-                            )
-                            export_oo_sig_file(
-                                data[data["Strategy"] == strategy], export_filename
-                            )
+                        try:
+                            strategies = data["source"].dropna().unique()
+                            for strategy in strategies:
+                                base_filename = (
+                                    f"{strat} - OO_Signal_File_{strategy}_{uuid_str}"
+                                )
+                                ext = ".csv"
+                                export_filename = get_next_filename(
+                                    path, base_filename, ext
+                                )
+                                export_oo_sig_file(
+                                    data[data["source"] == strategy], export_filename
+                                )
+                        except Exception as e:
+                            logger.exception("Error exporting OO Signal Files")
         if results_queue:
             results_queue.put(("-BACKTEST_END-", results))
         if optimizer_result is not None:
