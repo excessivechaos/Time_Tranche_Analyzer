@@ -1,13 +1,12 @@
 openpyxl
 pandas
-PySimpleGUI==4.60.5
+PySimpleGUI
 xlsxwriter
 matplotlib
 numpy
-python-dateutil
-psgcompiler==1.6.1
+psgcompiler
 pillow
-dateutil
+python-dateutil
 seaborn
 yfinance
 loguru
