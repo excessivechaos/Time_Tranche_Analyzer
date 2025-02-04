@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.14.2"
+__version__ = "v.1.14.3"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1856,7 +1856,7 @@ def walk_forward_test(
                 best_time_date = current_date - relativedelta(months=1)
             elif settings["-AGG_TYPE-"] == "Semi-Monthly":
                 # grab from last half-month
-                best_time_date = current_date - relativedelta(days=15)
+                best_time_date = current_date - relativedelta(days=16)
             else:
                 # grab from last week
                 best_time_date = current_date - relativedelta(weeks=1)
