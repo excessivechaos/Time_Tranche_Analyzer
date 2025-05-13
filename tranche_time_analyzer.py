@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.14.4"
+__version__ = "v.1.14.6"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -599,9 +599,11 @@ def export_oo_sig_file(trade_log_df: pd.DataFrame, filename: str):
                 leg_parts = leg.strip().split(" ")
                 signal_data.append(
                     {
-                        "OPEN_DATETIME": trade["Date Opened"].strftime("%Y-%m-%d")
-                        + " "
-                        + trade["Time Opened"][:5],
+                        "OPEN_DATETIME": (
+                            trade["Date Opened"].strftime("%Y-%m-%d")
+                            + " "
+                            + trade["Time Opened"][:5]
+                        ),
                         "BUY_SELL": "B" if leg_parts[5] == "BTO" else "S",
                         "CALL_PUT": leg_parts[4],
                         "STRIKE": leg_parts[3],
@@ -1637,7 +1639,9 @@ def walk_forward_test(
             "Num Tranches": 1,
             "Port Num Tranches": 1,
             "trade log": pd.DataFrame(),
-            "Tlog Auto Exclusions": pd.DataFrame(),  # for warm-up to calc EV for auto exclusions
+            "Tlog Auto Exclusions": (
+                pd.DataFrame()
+            ),  # for warm-up to calc EV for auto exclusions
             "Win Streak": 0,
             "Loss Streak": 0,
         }
