@@ -43,7 +43,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.15.14a"
+__version__ = "v.1.15.16a"
 __program_name__ = "Tranche Time Analyzer"
 
 
@@ -145,6 +145,7 @@ def import_news_events(filename) -> bool:
             "Fed Interest Rate Decision": "FOMC",
             "Michigan Consumer Sentiment Index": "MI Consumer Sent.",
             "Chicago Purchasing": "Chicago PMI",
+            "Chicago PMI": "Chicago PMI",
         }
 
         if "S&P" in name and "PMI" in name:
