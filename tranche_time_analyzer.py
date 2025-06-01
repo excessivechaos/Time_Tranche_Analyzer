@@ -34,7 +34,7 @@ try:
 except Exception:
     pass
 
-__version__ = "v.1.14.6"
+__version__ = "v.1.14.7"
 __program_name__ = "Tranche Time Analyzer"
 
 if True:  # code collapse for base64 strings
@@ -1116,6 +1116,7 @@ def import_news_events(filename) -> bool:
             "Fed Interest Rate Decision": "FOMC",
             "Michigan Consumer Sentiment Index": "MI Consumer Sent.",
             "Chicago Purchasing": "Chicago PMI",
+            "Chicago PMI": "Chicago PMI",
         }
 
         if "S&P" in name and "PMI" in name:
